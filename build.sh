@@ -6,7 +6,7 @@ function die() {
 
 }
 
-BRANCH=`git rev-parse --abbrev-ref HEAD | sed -e 's/ \t//g'`
+BRANCH=`git describe --tags | sed -e 's/ \t//g;s/-[0-9]\+-g.*//'`
 BDIR="build-$BRANCH"
 
 echo "Using build directory '$BDIR'"
