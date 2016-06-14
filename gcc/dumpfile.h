@@ -38,6 +38,7 @@ enum tree_dump_index
   TDI_tree_all,                 /* enable all the GENERIC/GIMPLE dumps.  */
   TDI_rtl_all,                  /* enable all the RTL dumps.  */
   TDI_ipa_all,                  /* enable all the IPA dumps.  */
+  TDI_krakonos,					/* enable Krakonos' dumps. */
 
   TDI_end
 };

@@ -83,6 +83,8 @@ static struct dump_file_info dump_files[TDI_end] =
    0, 0, 0, 0, 0, false},
   {NULL, "ipa-all", NULL, NULL, NULL, NULL, NULL, TDF_IPA,
    0, 0, 0, 0, 0, false},
+  {".krakonos", "krakonos", NULL, NULL, NULL, NULL, NULL, TDF_IPA,
+   0, 0, 0, 0, 0, false},
 };
 
 /* Define a name->number mapping for a dump flag value.  */

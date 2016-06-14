@@ -239,6 +239,7 @@
 
 static bool use_field_sensitive = true;
 static int in_ipa_mode = 0;
+static FILE *glob_ipa_dump = NULL;
 
 /* Used for predecessor bitmaps. */
 static bitmap_obstack predbitmap_obstack;
@@ -358,6 +359,7 @@ static alloc_pool variable_info_pool;
 
 /* Map varinfo to final pt_solution.  */
 static hash_map<varinfo_t, pt_solution *> *final_solutions;
+static hash_map<pt_solution *, unsigned> *final_solutions_rev;
 struct obstack final_solutions_obstack;
 
 /* Table of variable info structures for constraint variables.
@@ -5844,9 +5846,17 @@ dump_solution_for_var (FILE *file, unsigned int var)
      in scanning dumps in the testsuite.  */
   fprintf (file, "%s = { ", vi->name);
   vi = get_varinfo (find (var));
-  EXECUTE_IF_SET_IN_BITMAP (vi->solution, 0, i, bi)
-    fprintf (file, "%s ", get_varinfo (i)->name);
+  unsigned set_size = 0;
+  EXECUTE_IF_SET_IN_BITMAP (vi->solution, 0, i, bi) {
+    set_size++;
+    //fprintf (file, "%s ", get_varinfo (i)->name); /* TODO: This might be a problem for big stuff like firefox, as the log files become HUGE */
+  }
   fprintf (file, "}");
+
+  if (glob_ipa_dump) {
+	/* Dump the set size and information; TODO: Add flags that indicate if it contains special sets, as for example the ESCAPED set. */
+    fprintf(file, "%u/%s;%u\n", var, vi->name, set_size);
+  }
 
   /* But note when the variable was unified.  */
   if (vi->id != var)
@@ -6132,8 +6142,10 @@ find_what_var_points_to (varinfo_t orig_vi)
 
   /* Instead of doing extra work, simply do not create
      elaborate points-to information for pt_anything pointers.  */
-  if (pt->anything)
+  if (pt->anything) {
+  	pt->varid = vi->id;
     return *pt;
+  }
 
   /* Share the final set of variables when possible.  */
   finished_solution = BITMAP_GGC_ALLOC ();
@@ -6152,6 +6164,7 @@ find_what_var_points_to (varinfo_t orig_vi)
       bitmap_clear (finished_solution);
     }
 
+  pt->varid = vi->id;
   return *pt;
 }
 
@@ -6283,28 +6296,38 @@ pt_solution_ior_into (struct pt_solution *dest, struct pt_solution *src)
 
 /* Return true if the points-to solution *PT is empty.  */
 
+unsigned pt_solution_to_vi_id(struct pt_solution *pt) {
+	return pt->varid;
+}
+
+unsigned long pt_solution_size(struct pt_solution *pt) {
+	if (pt->vars)
+		return bitmap_count_bits(pt->vars);
+	else 
+		return -1;
+}
+
 bool
 pt_solution_empty_p (struct pt_solution *pt)
 {
-  if (pt->anything
-      || pt->nonlocal)
-    return false;
 
-  if (pt->vars
-      && !bitmap_empty_p (pt->vars))
-    return false;
-
+  bool ret = true;
+  if (pt->anything || pt->nonlocal)
+	  ret = false;
+  else if (pt->vars && !bitmap_empty_p (pt->vars))
+	  ret = false;
   /* If the solution includes ESCAPED, check if that is empty.  */
-  if (pt->escaped
-      && !pt_solution_empty_p (&cfun->gimple_df->escaped))
-    return false;
-
+  else if (pt->escaped && !pt_solution_empty_p (&cfun->gimple_df->escaped))
+	  ret = false;
   /* If the solution includes ESCAPED, check if that is empty.  */
-  if (pt->ipa_escaped
-      && !pt_solution_empty_p (&ipa_escaped_pt))
-    return false;
+  else if (pt->ipa_escaped && !pt_solution_empty_p (&ipa_escaped_pt))
+	  ret = false;
 
-  return true;
+  if (glob_ipa_dump) {
+    fprintf(glob_ipa_dump, "query_pt_solution_empty_p;%u;NA;%s;%lu;NA\n", pt_solution_to_vi_id(pt), ret ? "true" : "false", pt_solution_size(pt));
+  }
+
+  return ret;
 }
 
 /* Return true if the points-to solution *PT only point to a single var, and
@@ -6313,13 +6336,19 @@ pt_solution_empty_p (struct pt_solution *pt)
 bool
 pt_solution_singleton_p (struct pt_solution *pt, unsigned *uid)
 {
+	bool ret = true;
   if (pt->anything || pt->nonlocal || pt->escaped || pt->ipa_escaped
       || pt->null || pt->vars == NULL
       || !bitmap_single_bit_set_p (pt->vars))
-    return false;
+    ret = false;
 
-  *uid = bitmap_first_set_bit (pt->vars);
-  return true;
+  if (glob_ipa_dump) {
+    fprintf(glob_ipa_dump, "query_pt_solution_singleton_p;%u;NA;%s;%lu;NA\n", pt_solution_to_vi_id(pt), ret ? "true" : "false", pt_solution_size(pt));
+  }
+
+  if (ret)
+  	*uid = bitmap_first_set_bit (pt->vars);
+  return ret;
 }
 
 /* Return true if the points-to solution *PT includes global memory.  */
@@ -6327,6 +6356,7 @@ pt_solution_singleton_p (struct pt_solution *pt, unsigned *uid)
 bool
 pt_solution_includes_global (struct pt_solution *pt)
 {
+  bool ret = false;
   if (pt->anything
       || pt->nonlocal
       || pt->vars_contains_nonlocal
@@ -6334,22 +6364,24 @@ pt_solution_includes_global (struct pt_solution *pt)
          In reality we'd need different sets for escaped-through-return
 	 and escaped-to-callees and passes would need to be updated.  */
       || pt->vars_contains_escaped_heap)
-    return true;
-
+	  ret = true;
   /* 'escaped' is also a placeholder so we have to look into it.  */
-  if (pt->escaped)
-    return pt_solution_includes_global (&cfun->gimple_df->escaped);
-
-  if (pt->ipa_escaped)
-    return pt_solution_includes_global (&ipa_escaped_pt);
+  else if (pt->escaped)
+    ret = pt_solution_includes_global (&cfun->gimple_df->escaped);
+  else if (pt->ipa_escaped)
+    ret = pt_solution_includes_global (&ipa_escaped_pt);
 
   /* ???  This predicate is not correct for the IPA-PTA solution
      as we do not properly distinguish between unit escape points
      and global variables.  */
-  if (cfun->gimple_df->ipa_pta)
-    return true;
+  else if (cfun->gimple_df->ipa_pta)
+    ret = true;
 
-  return false;
+  if (glob_ipa_dump) {
+    fprintf(glob_ipa_dump, "query_pt_solution_includes_global;%u;NA;%s;%lu;NA\n", pt_solution_to_vi_id(pt), ret ? "true" : "false", pt_solution_size(pt));
+  }
+
+  return ret;
 }
 
 /* Return true if the points-to solution *PT includes the variable
@@ -6390,6 +6422,11 @@ pt_solution_includes (struct pt_solution *pt, const_tree decl)
     ++pta_stats.pt_solution_includes_may_alias;
   else
     ++pta_stats.pt_solution_includes_no_alias;
+
+  if (glob_ipa_dump) {
+    fprintf(glob_ipa_dump, "query_pt_solution_includes;%u;NA;%s;%lu;NA\n", pt_solution_to_vi_id(pt), res ? "true" : "false", pt_solution_size(pt));
+  }
+
   return res;
 }
 
@@ -6453,6 +6490,9 @@ pt_solutions_intersect (struct pt_solution *pt1, struct pt_solution *pt2)
     ++pta_stats.pt_solutions_intersect_may_alias;
   else
     ++pta_stats.pt_solutions_intersect_no_alias;
+  if (glob_ipa_dump) {
+    fprintf(glob_ipa_dump, "query_pt_solution_intersect;%u;%u;%s;%lu;%lu\n", pt_solution_to_vi_id(pt1), pt_solution_to_vi_id(pt2), res ? "true" : "false", pt_solution_size(pt1), pt_solution_size(pt2));
+  }
   return res;
 }
 
@@ -6690,6 +6730,7 @@ init_alias_vars (void)
   gcc_obstack_init (&fake_var_decl_obstack);
 
   final_solutions = new hash_map<varinfo_t, pt_solution *>;
+  final_solutions_rev = new hash_map<pt_solution *, unsigned>; // unsigned is the vainfo_t->id value
   gcc_obstack_init (&final_solutions_obstack);
 }
 
@@ -7268,7 +7309,7 @@ make_pass_build_ealias (gcc::context *ctxt)
 
 /* IPA PTA solutions for ESCAPED.  */
 struct pt_solution ipa_escaped_pt
-  = { true, false, false, false, false, false, false, false, NULL };
+  = { true, false, false, false, false, false, false, false, NULL, 0 };
 
 /* Associate node with varinfo DATA. Worker for
    cgraph_for_node_and_aliases.  */
@@ -7290,6 +7331,11 @@ ipa_pta_execute (void)
   int from;
 
   in_ipa_mode = 1;
+  
+  /* A file to dump some data in, mostly statistics. */
+  if (dump_file) {
+    glob_ipa_dump = dump_begin (TDI_krakonos, NULL);
+  }
 
   init_alias_vars ();
 
@@ -7595,7 +7641,7 @@ ipa_pta_execute (void)
       fn->gimple_df->ipa_pta = true;
     }
 
-  delete_points_to_sets ();
+  //delete_points_to_sets (); // KTODO: WTF?
 
   in_ipa_mode = 0;
 
@@ -7616,6 +7662,7 @@ const pass_data pass_data_ipa_pta =
   0, /* todo_flags_start */
   0, /* todo_flags_finish */
 };
+
 
 class pass_ipa_pta : public simple_ipa_opt_pass
 {

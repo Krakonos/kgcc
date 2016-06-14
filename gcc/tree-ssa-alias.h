@@ -58,6 +58,9 @@ struct GTY(()) pt_solution
 
   /* Set of variables that this pointer may point to.  */
   bitmap vars;
+
+  /* representative varid */
+  unsigned varid;
 };
 
 
