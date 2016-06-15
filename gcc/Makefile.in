@@ -938,7 +938,7 @@ CPP_INTERNAL_H = $(srcdir)/../libcpp/internal.h $(CPP_ID_DATA_H)
 TREE_DUMP_H = tree-dump.h $(SPLAY_TREE_H) $(DUMPFILE_H)
 TREE_PASS_H = tree-pass.h $(TIMEVAR_H) $(DUMPFILE_H)
 TREE_SSA_H = tree-ssa.h tree-ssa-operands.h \
-		$(BITMAP_H) sbitmap.h $(BASIC_BLOCK_H) $(GIMPLE_H) \
+		$(BITMAP_H) sbitmap.h $(BLOOMAP_H) $(BASIC_BLOCK_H) $(GIMPLE_H) \
 		$(HASHTAB_H) $(CGRAPH_H) $(IPA_REFERENCE_H) \
 		tree-ssa-alias.h
 PRETTY_PRINT_H = pretty-print.h $(INPUT_H) $(OBSTACK_H) wide-int-print.h
@@ -955,6 +955,7 @@ LTO_STREAMER_H = lto-streamer.h $(LINKER_PLUGIN_API_H) $(TARGET_H) \
 		$(GCOV_IO_H) $(DIAGNOSTIC_H) alloc-pool.h
 IPA_PROP_H = ipa-prop.h $(TREE_H) $(VEC_H) $(CGRAPH_H) $(GIMPLE_H) alloc-pool.h
 BITMAP_H = bitmap.h $(HASHTAB_H) statistics.h
+BLOOMAP_H = bloomap.h bloomapfamily.h bloomfilter.h murmur.h $(HASHTAB_H) statistics.h
 GCC_PLUGIN_H = gcc-plugin.h highlev-plugin-common.h plugin.def \
 		$(CONFIG_H) $(SYSTEM_H) $(HASHTAB_H)
 PLUGIN_H = plugin.h $(GCC_PLUGIN_H)
@@ -1462,6 +1463,10 @@ OBJS = \
 	tree-ssa-sink.o \
 	tree-ssa-strlen.o \
 	tree-ssa-structalias.o \
+	bloomap.o \
+	bloomapfamily.o \
+	bloomfilter.o \
+	murmur.o \
 	tree-ssa-tail-merge.o \
 	tree-ssa-ter.o \
 	tree-ssa-threadedge.o \
@@ -1499,6 +1504,11 @@ OBJS = \
 	$(out_object_file) \
 	$(EXTRA_OBJS) \
 	$(host_hook_obj)
+
+CFLAGS-bloomapfamily.o += "-std=c++11"
+CFLAGS-bloomap.o       += "-std=c++11"
+CFLAGS-bloomfilter.o   += "-std=c++11"
+CFLAGS-murmur.o        += "-std=c++11"
 
 # Objects in libcommon.a, potentially used by all host binaries and with
 # no target dependencies.

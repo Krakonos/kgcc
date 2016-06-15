@@ -8,18 +8,18 @@ function die() {
 
 function usage() {
 cat >&2 <<EOF
-Usage: $0 [-r] [-i]
+Usage: $0 [-r] [-i] [-d DIR]
 	-r        do a full rebuild, removing the BDIR first
 	-i        install when done
+	-d DIR    set BDIR to DIR, instead of the default name derived from current git branch
 EOF
-#	-d DIR    set BDIR to DIR, instead of the default name derived from current git branch
 }
 
 DO_REBUILD=0
 DO_INSTALL=0
 PRETEND=0
 
-while getopts ":rip" opt; do
+while getopts ":ripd:" opt; do
   case $opt in
     r)
 	    DO_REBUILD=1
@@ -30,6 +30,9 @@ while getopts ":rip" opt; do
 	p)
 		PRETEND=1
 	  ;;
+	d) 
+		BDIR=$OPTARG
+	  ;;
     *)
 	  usage
 	  exit 1
@@ -38,7 +41,10 @@ while getopts ":rip" opt; do
 done
 
 BRANCH=`git describe --tags | sed -e 's/ \t//g;s/-[0-9]\+-g.*//'`
-BDIR="build-$BRANCH"
+
+if [ -z "$BDIR" ]; then
+	BDIR="build-$BRANCH"
+fi
 
 echo "Using build directory '$BDIR'"
 
@@ -57,12 +63,13 @@ if [ $DO_REBUILD -eq 1 ]; then
 	echo "Doing full rebuild. The directory '$BDIR' will be removed in 5 seconds...."
 	sleep 5
 	rm -rf "$BDIR"
+	autoreconf -vfi
 fi
 
 if [ ! -d "$BDIR" ]; then
 	mkdir "$BDIR"
 	cd "$BDIR"
-	../configure --prefix=$HOME/kgcc/$BRANCH --enable-languages=c++,c --disable-bootstrap || die "configure failed"
+	../configure --prefix=$HOME/kgcc/$BRANCH --enable-languages=c++,c --disable-bootstrap --enable-maintainer-mode || die "configure failed"
 else
 	echo "Build directory already exists, skipping configure phase. Pass '-r' to do a full rebuild."
 	cd "$BDIR"
