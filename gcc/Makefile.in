@@ -1463,6 +1463,7 @@ OBJS = \
 	tree-ssa-sink.o \
 	tree-ssa-strlen.o \
 	tree-ssa-structalias.o \
+	ik-structalias.o \
 	bloomap.o \
 	bloomapfamily.o \
 	bloomfilter.o \
@@ -1504,11 +1505,6 @@ OBJS = \
 	$(out_object_file) \
 	$(EXTRA_OBJS) \
 	$(host_hook_obj)
-
-CFLAGS-bloomapfamily.o += "-std=c++11"
-CFLAGS-bloomap.o       += "-std=c++11"
-CFLAGS-bloomfilter.o   += "-std=c++11"
-CFLAGS-murmur.o        += "-std=c++11"
 
 # Objects in libcommon.a, potentially used by all host binaries and with
 # no target dependencies.

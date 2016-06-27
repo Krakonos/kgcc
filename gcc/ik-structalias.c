@@ -18,6 +18,8 @@
    along with GCC; see the file COPYING3.  If not see
    <http://www.gnu.org/licenses/>.  */
 
+#include "bloomap.h"
+#include "bloomapfamily.h"
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
@@ -205,7 +207,7 @@
    The is_global_var bit which marks escape points is overly conservative
    in IPA mode.  Split it to is_escape_point and is_global_var - only
    externally visible globals are escape points in IPA mode.  This is
-   also needed to fix the pt_solution_includes_global predicate
+   also needed to fix the ik_pt_solution_includes_global predicate
    (and thus ptr_deref_may_alias_global_p).
 
    The way we introduce DECL_PT_UID to avoid fixing up all points-to
@@ -253,6 +255,8 @@ static bitmap_obstack oldpta_obstack;
 /* Used for per-solver-iteration bitmaps.  */
 static bitmap_obstack iteration_obstack;
 
+BloomapFamily *family;
+
 static unsigned int create_variable_info_for (tree, const char *);
 typedef struct constraint_graph *constraint_graph_t;
 static void unify_nodes (constraint_graph_t, unsigned int, unsigned int, bool);
@@ -265,7 +269,7 @@ typedef struct constraint *constraint_t;
   if (a)						\
     EXECUTE_IF_SET_IN_BITMAP (a, b, c, d)
 
-static struct constraint_stats
+static struct ik_constraint_stats
 {
   unsigned int total_vars;
   unsigned int nonpointer_vars;
@@ -276,8 +280,6 @@ static struct constraint_stats
   unsigned int num_implicit_edges;
   unsigned int points_to_sets_created;
 } stats;
-
-class Bloomap;
 
 struct variable_info
 {
@@ -345,8 +347,7 @@ struct variable_info
   /* Points-to set for this variable.  */
   bitmap solution;
 
-  /* TODO: These should really be separated, but it might be handy to have the same struct as ik-structalias in the future */
-  Bloomap* b_solution; 
+  Bloomap* b_solution;
   Bloomap* b_oldsolution;
 
   /* Old points-to set for this variable.  */
@@ -366,7 +367,7 @@ static alloc_pool variable_info_pool;
 /* Map varinfo to final pt_solution.  */
 static hash_map<varinfo_t, pt_solution *> *final_solutions;
 static hash_map<pt_solution *, unsigned> *final_solutions_rev;
-struct obstack final_solutions_obstack;
+static struct obstack final_solutions_obstack; /* TODO: Maybe not static? */
 
 /* Table of variable info structures for constraint variables.
    Indexed directly by variable info id.  */
@@ -428,6 +429,8 @@ new_var_info (tree t, const char *name)
 			      && DECL_HARD_REGISTER (t)));
   ret->solution = BITMAP_ALLOC (&pta_obstack);
   ret->oldsolution = NULL;
+  ret->b_solution = family->newMap();
+  ret->b_oldsolution = NULL;
   ret->next = 0;
   ret->head = ret->id;
 
@@ -717,16 +720,16 @@ dump_constraint (FILE *file, constraint_t c)
 }
 
 
-void debug_constraint (constraint_t);
-void debug_constraints (void);
-void debug_constraint_graph (void);
-void debug_solution_for_var (unsigned int);
-void debug_sa_points_to_info (void);
+void ik_debug_constraint (constraint_t);
+void ik_debug_constraints (void);
+void ik_debug_constraint_graph (void);
+void ik_debug_solution_for_var (unsigned int);
+void ik_debug_sa_points_to_info (void);
 
 /* Print out constraint C to stderr.  */
 
 DEBUG_FUNCTION void
-debug_constraint (constraint_t c)
+ik_debug_constraint (constraint_t c)
 {
   dump_constraint (stderr, c);
   fprintf (stderr, "\n");
@@ -750,7 +753,7 @@ dump_constraints (FILE *file, int from)
 /* Print out all constraints to stderr.  */
 
 DEBUG_FUNCTION void
-debug_constraints (void)
+ik_debug_constraints (void)
 {
   dump_constraints (stderr, 0);
 }
@@ -833,7 +836,7 @@ dump_constraint_graph (FILE *file)
 /* Print out the constraint graph to stderr.  */
 
 DEBUG_FUNCTION void
-debug_constraint_graph (void)
+ik_debug_constraint_graph (void)
 {
   dump_constraint_graph (stderr);
 }
@@ -963,6 +966,7 @@ constraint_set_union (vec<constraint_t> *to,
 
 /* Expands the solution in SET to all sub-fields of variables included.  */
 
+/* KNOTE: the expanded set seems to be very short lived, but it might be required to write a bloomap variant for the 'set' variable. */
 static bitmap
 solution_set_expand (bitmap set, bitmap *expanded)
 {
@@ -1004,6 +1008,7 @@ solution_set_expand (bitmap set, bitmap *expanded)
 /* Union solution sets TO and DELTA, and add INC to each member of DELTA in the
    process.  */
 
+/* KTODO:bloomap add bloomap variant */
 static bool
 set_union_with_increment  (bitmap to, bitmap delta, HOST_WIDE_INT inc,
 			   bitmap *expanded_delta)
@@ -1387,6 +1392,7 @@ build_succ_graph (void)
 	  /* x = &y */
 	  gcc_checking_assert (find (rhs.var) == rhs.var);
 	  bitmap_set_bit (get_varinfo (lhsvar)->solution, rhsvar);
+	  get_varinfo(lhsvar)->b_solution->add( rhsvar );
 	}
       else if (lhsvar > anything_id
 	       && lhsvar != rhsvar && lhs.offset == 0 && rhs.offset == 0)
@@ -1547,6 +1553,7 @@ unify_nodes (constraint_graph_t graph, unsigned int to, unsigned int from,
       && bitmap_clear_bit (changed, from))
     bitmap_set_bit (changed, to);
   varinfo_t fromvi = get_varinfo (from);
+  /* KTODO:bloomap Add bloomap handling */
   if (fromvi->solution)
     {
       /* If the solution changes because of the merging, we need to mark
@@ -3775,7 +3782,7 @@ make_transitive_closure_constraints (varinfo_t vi)
 }
 
 /* Temporary storage for fake var decls.  */
-struct obstack fake_var_decl_obstack;
+static struct obstack fake_var_decl_obstack; /*TODO: Really static? */
 
 /* Build a fake VAR_DECL acting as referrer to a DECL_UID.  */
 
@@ -5874,7 +5881,7 @@ dump_solution_for_var (FILE *file, unsigned int var)
 /* Print the points-to solution for VAR to stderr.  */
 
 DEBUG_FUNCTION void
-debug_solution_for_var (unsigned int var)
+ik_debug_solution_for_var (unsigned int var)
 {
   dump_solution_for_var (stderr, var);
 }
@@ -6092,6 +6099,7 @@ set_uids_in_ptset (bitmap into, bitmap from, struct pt_solution *pt)
 static struct pt_solution
 find_what_var_points_to (varinfo_t orig_vi)
 {
+  /* KTODO:add_bloomap */
   unsigned int i;
   bitmap_iterator bi;
   bitmap finished_solution;
@@ -6203,28 +6211,28 @@ find_what_p_points_to (tree p)
 /* Query statistics for points-to solutions.  */
 
 static struct {
-  unsigned HOST_WIDE_INT pt_solution_includes_may_alias;
-  unsigned HOST_WIDE_INT pt_solution_includes_no_alias;
-  unsigned HOST_WIDE_INT pt_solutions_intersect_may_alias;
-  unsigned HOST_WIDE_INT pt_solutions_intersect_no_alias;
+  unsigned HOST_WIDE_INT ik_pt_solution_includes_may_alias;
+  unsigned HOST_WIDE_INT ik_pt_solution_includes_no_alias;
+  unsigned HOST_WIDE_INT ik_pt_solutions_intersect_may_alias;
+  unsigned HOST_WIDE_INT ik_pt_solutions_intersect_no_alias;
 } pta_stats;
 
 void
-dump_pta_stats (FILE *s)
+ik_dump_pta_stats (FILE *s)
 {
   fprintf (s, "\nPTA query stats:\n");
-  fprintf (s, "  pt_solution_includes: "
+  fprintf (s, "  ik_pt_solution_includes: "
 	   HOST_WIDE_INT_PRINT_DEC" disambiguations, "
 	   HOST_WIDE_INT_PRINT_DEC" queries\n",
-	   pta_stats.pt_solution_includes_no_alias,
-	   pta_stats.pt_solution_includes_no_alias
-	   + pta_stats.pt_solution_includes_may_alias);
-  fprintf (s, "  pt_solutions_intersect: "
+	   pta_stats.ik_pt_solution_includes_no_alias,
+	   pta_stats.ik_pt_solution_includes_no_alias
+	   + pta_stats.ik_pt_solution_includes_may_alias);
+  fprintf (s, "  ik_pt_solutions_intersect: "
 	   HOST_WIDE_INT_PRINT_DEC" disambiguations, "
 	   HOST_WIDE_INT_PRINT_DEC" queries\n",
-	   pta_stats.pt_solutions_intersect_no_alias,
-	   pta_stats.pt_solutions_intersect_no_alias
-	   + pta_stats.pt_solutions_intersect_may_alias);
+	   pta_stats.ik_pt_solutions_intersect_no_alias,
+	   pta_stats.ik_pt_solutions_intersect_no_alias
+	   + pta_stats.ik_pt_solutions_intersect_may_alias);
 }
 
 
@@ -6232,7 +6240,7 @@ dump_pta_stats (FILE *s)
    (point to anything).  */
 
 void
-pt_solution_reset (struct pt_solution *pt)
+ik_pt_solution_reset (struct pt_solution *pt)
 {
   memset (pt, 0, sizeof (struct pt_solution));
   pt->anything = true;
@@ -6244,9 +6252,10 @@ pt_solution_reset (struct pt_solution *pt)
    it contains restrict tag variables.  */
 
 void
-pt_solution_set (struct pt_solution *pt, bitmap vars,
+ik_pt_solution_set (struct pt_solution *pt, bitmap vars,
 		 bool vars_contains_nonlocal)
 {
+  /* KTODO:add_bloomap */
   memset (pt, 0, sizeof (struct pt_solution));
   pt->vars = vars;
   pt->vars_contains_nonlocal = vars_contains_nonlocal;
@@ -6258,8 +6267,9 @@ pt_solution_set (struct pt_solution *pt, bitmap vars,
 /* Set the points-to solution *PT to point only to the variable VAR.  */
 
 void
-pt_solution_set_var (struct pt_solution *pt, tree var)
+ik_pt_solution_set_var (struct pt_solution *pt, tree var)
 {
+  /* KTODO:add_bloomap */
   memset (pt, 0, sizeof (struct pt_solution));
   pt->vars = BITMAP_GGC_ALLOC ();
   bitmap_set_bit (pt->vars, DECL_PT_UID (var));
@@ -6276,12 +6286,13 @@ pt_solution_set_var (struct pt_solution *pt, tree var)
    this function if they were not before.  */
 
 static void
-pt_solution_ior_into (struct pt_solution *dest, struct pt_solution *src)
+ik_pt_solution_ior_into (struct pt_solution *dest, struct pt_solution *src)
 {
+  /* KTODO:add_bloomap */
   dest->anything |= src->anything;
   if (dest->anything)
     {
-      pt_solution_reset (dest);
+      ik_pt_solution_reset (dest);
       return;
     }
 
@@ -6302,11 +6313,12 @@ pt_solution_ior_into (struct pt_solution *dest, struct pt_solution *src)
 
 /* Return true if the points-to solution *PT is empty.  */
 
-unsigned pt_solution_to_vi_id(struct pt_solution *pt) {
+unsigned ik_pt_solution_to_vi_id(struct pt_solution *pt) {
 	return pt->varid;
 }
 
-unsigned long pt_solution_size(struct pt_solution *pt) {
+unsigned long ik_pt_solution_size(struct pt_solution *pt) {
+  /* KTODO:add_bloomap */
 	if (pt->vars)
 		return bitmap_count_bits(pt->vars);
 	else 
@@ -6314,23 +6326,24 @@ unsigned long pt_solution_size(struct pt_solution *pt) {
 }
 
 bool
-pt_solution_empty_p (struct pt_solution *pt)
+ik_pt_solution_empty_p (struct pt_solution *pt)
 {
 
+  /* KTODO:add_bloomap */
   bool ret = true;
   if (pt->anything || pt->nonlocal)
 	  ret = false;
   else if (pt->vars && !bitmap_empty_p (pt->vars))
 	  ret = false;
   /* If the solution includes ESCAPED, check if that is empty.  */
-  else if (pt->escaped && !pt_solution_empty_p (&cfun->gimple_df->escaped))
+  else if (pt->escaped && !ik_pt_solution_empty_p (&cfun->gimple_df->escaped))
 	  ret = false;
   /* If the solution includes ESCAPED, check if that is empty.  */
-  else if (pt->ipa_escaped && !pt_solution_empty_p (&ipa_escaped_pt))
+  else if (pt->ipa_escaped && !ik_pt_solution_empty_p (&ik_ipa_escaped_pt))
 	  ret = false;
 
   if (glob_ipa_dump) {
-    fprintf(glob_ipa_dump, "query_pt_solution_empty_p;%u;NA;%s;%lu;NA\n", pt_solution_to_vi_id(pt), ret ? "true" : "false", pt_solution_size(pt));
+    fprintf(glob_ipa_dump, "query_ik_pt_solution_empty_p;%u;NA;%s;%lu;NA\n", ik_pt_solution_to_vi_id(pt), ret ? "true" : "false", ik_pt_solution_size(pt));
   }
 
   return ret;
@@ -6340,8 +6353,9 @@ pt_solution_empty_p (struct pt_solution *pt)
    return the var uid in *UID.  */
 
 bool
-pt_solution_singleton_p (struct pt_solution *pt, unsigned *uid)
+ik_pt_solution_singleton_p (struct pt_solution *pt, unsigned *uid)
 {
+  /* KTODO:add_bloomap */
 	bool ret = true;
   if (pt->anything || pt->nonlocal || pt->escaped || pt->ipa_escaped
       || pt->null || pt->vars == NULL
@@ -6349,7 +6363,7 @@ pt_solution_singleton_p (struct pt_solution *pt, unsigned *uid)
     ret = false;
 
   if (glob_ipa_dump) {
-    fprintf(glob_ipa_dump, "query_pt_solution_singleton_p;%u;NA;%s;%lu;NA\n", pt_solution_to_vi_id(pt), ret ? "true" : "false", pt_solution_size(pt));
+    fprintf(glob_ipa_dump, "query_ik_pt_solution_singleton_p;%u;NA;%s;%lu;NA\n", ik_pt_solution_to_vi_id(pt), ret ? "true" : "false", ik_pt_solution_size(pt));
   }
 
   if (ret)
@@ -6360,8 +6374,9 @@ pt_solution_singleton_p (struct pt_solution *pt, unsigned *uid)
 /* Return true if the points-to solution *PT includes global memory.  */
 
 bool
-pt_solution_includes_global (struct pt_solution *pt)
+ik_pt_solution_includes_global (struct pt_solution *pt)
 {
+  /* KTODO:add_bloomap */
   bool ret = false;
   if (pt->anything
       || pt->nonlocal
@@ -6373,9 +6388,9 @@ pt_solution_includes_global (struct pt_solution *pt)
 	  ret = true;
   /* 'escaped' is also a placeholder so we have to look into it.  */
   else if (pt->escaped)
-    ret = pt_solution_includes_global (&cfun->gimple_df->escaped);
+    ret = ik_pt_solution_includes_global (&cfun->gimple_df->escaped);
   else if (pt->ipa_escaped)
-    ret = pt_solution_includes_global (&ipa_escaped_pt);
+    ret = ik_pt_solution_includes_global (&ik_ipa_escaped_pt);
 
   /* ???  This predicate is not correct for the IPA-PTA solution
      as we do not properly distinguish between unit escape points
@@ -6384,7 +6399,7 @@ pt_solution_includes_global (struct pt_solution *pt)
     ret = true;
 
   if (glob_ipa_dump) {
-    fprintf(glob_ipa_dump, "query_pt_solution_includes_global;%u;NA;%s;%lu;NA\n", pt_solution_to_vi_id(pt), ret ? "true" : "false", pt_solution_size(pt));
+    fprintf(glob_ipa_dump, "query_ik_pt_solution_includes_global;%u;NA;%s;%lu;NA\n", ik_pt_solution_to_vi_id(pt), ret ? "true" : "false", ik_pt_solution_size(pt));
   }
 
   return ret;
@@ -6394,8 +6409,9 @@ pt_solution_includes_global (struct pt_solution *pt)
    declaration DECL.  */
 
 static bool
-pt_solution_includes_1 (struct pt_solution *pt, const_tree decl)
+ik_pt_solution_includes_1 (struct pt_solution *pt, const_tree decl)
 {
+  /* KTODO:add_bloomap */
   if (pt->anything)
     return true;
 
@@ -6409,28 +6425,29 @@ pt_solution_includes_1 (struct pt_solution *pt, const_tree decl)
 
   /* If the solution includes ESCAPED, check it.  */
   if (pt->escaped
-      && pt_solution_includes_1 (&cfun->gimple_df->escaped, decl))
+      && ik_pt_solution_includes_1 (&cfun->gimple_df->escaped, decl))
     return true;
 
   /* If the solution includes ESCAPED, check it.  */
   if (pt->ipa_escaped
-      && pt_solution_includes_1 (&ipa_escaped_pt, decl))
+      && ik_pt_solution_includes_1 (&ik_ipa_escaped_pt, decl))
     return true;
 
   return false;
 }
 
 bool
-pt_solution_includes (struct pt_solution *pt, const_tree decl)
+ik_pt_solution_includes (struct pt_solution *pt, const_tree decl)
 {
-  bool res = pt_solution_includes_1 (pt, decl);
+  /* KTODO:add_bloomap */
+  bool res = ik_pt_solution_includes_1 (pt, decl);
   if (res)
-    ++pta_stats.pt_solution_includes_may_alias;
+    ++pta_stats.ik_pt_solution_includes_may_alias;
   else
-    ++pta_stats.pt_solution_includes_no_alias;
+    ++pta_stats.ik_pt_solution_includes_no_alias;
 
   if (glob_ipa_dump) {
-    fprintf(glob_ipa_dump, "query_pt_solution_includes;%u;NA;%s;%lu;NA\n", pt_solution_to_vi_id(pt), res ? "true" : "false", pt_solution_size(pt));
+    fprintf(glob_ipa_dump, "query_ik_pt_solution_includes;%u;NA;%s;%lu;NA\n", ik_pt_solution_to_vi_id(pt), res ? "true" : "false", ik_pt_solution_size(pt));
   }
 
   return res;
@@ -6440,8 +6457,9 @@ pt_solution_includes (struct pt_solution *pt, const_tree decl)
    intersection.  */
 
 static bool
-pt_solutions_intersect_1 (struct pt_solution *pt1, struct pt_solution *pt2)
+ik_pt_solutions_intersect_1 (struct pt_solution *pt1, struct pt_solution *pt2)
 {
+  /* KTODO:add_bloomap */
   if (pt1->anything || pt2->anything)
     return true;
 
@@ -6466,7 +6484,7 @@ pt_solutions_intersect_1 (struct pt_solution *pt1, struct pt_solution *pt2)
   /* Check the escaped solution if required.
      ???  Do we need to check the local against the IPA escaped sets?  */
   if ((pt1->ipa_escaped || pt2->ipa_escaped)
-      && !pt_solution_empty_p (&ipa_escaped_pt))
+      && !ik_pt_solution_empty_p (&ik_ipa_escaped_pt))
     {
       /* If both point to escaped memory and that solution
 	 is not empty they alias.  */
@@ -6476,9 +6494,9 @@ pt_solutions_intersect_1 (struct pt_solution *pt1, struct pt_solution *pt2)
       /* If either points to escaped memory see if the escaped solution
 	 intersects with the other.  */
       if ((pt1->ipa_escaped
-	   && pt_solutions_intersect_1 (&ipa_escaped_pt, pt2))
+	   && ik_pt_solutions_intersect_1 (&ik_ipa_escaped_pt, pt2))
 	  || (pt2->ipa_escaped
-	      && pt_solutions_intersect_1 (&ipa_escaped_pt, pt1)))
+	      && ik_pt_solutions_intersect_1 (&ik_ipa_escaped_pt, pt1)))
 	return true;
     }
 
@@ -6489,15 +6507,16 @@ pt_solutions_intersect_1 (struct pt_solution *pt1, struct pt_solution *pt2)
 }
 
 bool
-pt_solutions_intersect (struct pt_solution *pt1, struct pt_solution *pt2)
+ik_pt_solutions_intersect (struct pt_solution *pt1, struct pt_solution *pt2)
 {
-  bool res = pt_solutions_intersect_1 (pt1, pt2);
+  /* KTODO:add_bloomap */
+  bool res = ik_pt_solutions_intersect_1 (pt1, pt2);
   if (res)
-    ++pta_stats.pt_solutions_intersect_may_alias;
+    ++pta_stats.ik_pt_solutions_intersect_may_alias;
   else
-    ++pta_stats.pt_solutions_intersect_no_alias;
+    ++pta_stats.ik_pt_solutions_intersect_no_alias;
   if (glob_ipa_dump) {
-    fprintf(glob_ipa_dump, "query_pt_solution_intersect;%u;%u;%s;%lu;%lu\n", pt_solution_to_vi_id(pt1), pt_solution_to_vi_id(pt2), res ? "true" : "false", pt_solution_size(pt1), pt_solution_size(pt2));
+    fprintf(glob_ipa_dump, "query_ik_pt_solution_intersect;%u;%u;%s;%lu;%lu\n", ik_pt_solution_to_vi_id(pt1), ik_pt_solution_to_vi_id(pt2), res ? "true" : "false", ik_pt_solution_size(pt1), ik_pt_solution_size(pt2));
   }
   return res;
 }
@@ -6541,7 +6560,7 @@ dump_sa_points_to_info (FILE *outfile)
 /* Debug points-to information to stderr.  */
 
 DEBUG_FUNCTION void
-debug_sa_points_to_info (void)
+ik_debug_sa_points_to_info (void)
 {
   dump_sa_points_to_info (stderr);
 }
@@ -6849,473 +6868,9 @@ solve_constraints (void)
     dump_sa_points_to_info (dump_file);
 }
 
-/* Create points-to sets for the current function.  See the comments
-   at the start of the file for an algorithmic overview.  */
-
-static void
-compute_points_to_sets (void)
-{
-  basic_block bb;
-  unsigned i;
-  varinfo_t vi;
-
-  timevar_push (TV_TREE_PTA);
-
-  init_alias_vars ();
-
-  intra_create_variable_infos (cfun);
-
-  /* Now walk all statements and build the constraint set.  */
-  FOR_EACH_BB_FN (bb, cfun)
-    {
-      for (gphi_iterator gsi = gsi_start_phis (bb); !gsi_end_p (gsi);
-	   gsi_next (&gsi))
-	{
-	  gphi *phi = gsi.phi ();
-
-	  if (! virtual_operand_p (gimple_phi_result (phi)))
-	    find_func_aliases (cfun, phi);
-	}
-
-      for (gimple_stmt_iterator gsi = gsi_start_bb (bb); !gsi_end_p (gsi);
-	   gsi_next (&gsi))
-	{
-	  gimple stmt = gsi_stmt (gsi);
-
-	  find_func_aliases (cfun, stmt);
-	}
-    }
-
-  if (dump_file)
-    {
-      fprintf (dump_file, "Points-to analysis\n\nConstraints:\n\n");
-      dump_constraints (dump_file, 0);
-    }
-
-  /* From the constraints compute the points-to sets.  */
-  solve_constraints ();
-
-  /* Compute the points-to set for ESCAPED used for call-clobber analysis.  */
-  cfun->gimple_df->escaped = find_what_var_points_to (get_varinfo (escaped_id));
-
-  /* Make sure the ESCAPED solution (which is used as placeholder in
-     other solutions) does not reference itself.  This simplifies
-     points-to solution queries.  */
-  cfun->gimple_df->escaped.escaped = 0;
-
-  /* Compute the points-to sets for pointer SSA_NAMEs.  */
-  for (i = 0; i < num_ssa_names; ++i)
-    {
-      tree ptr = ssa_name (i);
-      if (ptr
-	  && POINTER_TYPE_P (TREE_TYPE (ptr)))
-	find_what_p_points_to (ptr);
-    }
-
-  /* Compute the call-used/clobbered sets.  */
-  FOR_EACH_BB_FN (bb, cfun)
-    {
-      gimple_stmt_iterator gsi;
-
-      for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
-	{
-	  gcall *stmt;
-	  struct pt_solution *pt;
-
-	  stmt = dyn_cast <gcall *> (gsi_stmt (gsi));
-	  if (!stmt)
-	    continue;
-
-	  pt = gimple_call_use_set (stmt);
-	  if (gimple_call_flags (stmt) & ECF_CONST)
-	    memset (pt, 0, sizeof (struct pt_solution));
-	  else if ((vi = lookup_call_use_vi (stmt)) != NULL)
-	    {
-	      *pt = find_what_var_points_to (vi);
-	      /* Escaped (and thus nonlocal) variables are always
-	         implicitly used by calls.  */
-	      /* ???  ESCAPED can be empty even though NONLOCAL
-		 always escaped.  */
-	      pt->nonlocal = 1;
-	      pt->escaped = 1;
-	    }
-	  else
-	    {
-	      /* If there is nothing special about this call then
-		 we have made everything that is used also escape.  */
-	      *pt = cfun->gimple_df->escaped;
-	      pt->nonlocal = 1;
-	    }
-
-	  pt = gimple_call_clobber_set (stmt);
-	  if (gimple_call_flags (stmt) & (ECF_CONST|ECF_PURE|ECF_NOVOPS))
-	    memset (pt, 0, sizeof (struct pt_solution));
-	  else if ((vi = lookup_call_clobber_vi (stmt)) != NULL)
-	    {
-	      *pt = find_what_var_points_to (vi);
-	      /* Escaped (and thus nonlocal) variables are always
-	         implicitly clobbered by calls.  */
-	      /* ???  ESCAPED can be empty even though NONLOCAL
-		 always escaped.  */
-	      pt->nonlocal = 1;
-	      pt->escaped = 1;
-	    }
-	  else
-	    {
-	      /* If there is nothing special about this call then
-		 we have made everything that is used also escape.  */
-	      *pt = cfun->gimple_df->escaped;
-	      pt->nonlocal = 1;
-	    }
-	}
-    }
-
-  timevar_pop (TV_TREE_PTA);
-}
-
-
-/* Delete created points-to sets.  */
-
-static void
-delete_points_to_sets (void)
-{
-  unsigned int i;
-
-  delete shared_bitmap_table;
-  shared_bitmap_table = NULL;
-  if (dump_file && (dump_flags & TDF_STATS))
-    fprintf (dump_file, "Points to sets created:%d\n",
-	     stats.points_to_sets_created);
-
-  delete vi_for_tree;
-  delete call_stmt_vars;
-  bitmap_obstack_release (&pta_obstack);
-  constraints.release ();
-
-  for (i = 0; i < graph->size; i++)
-    graph->complex[i].release ();
-  free (graph->complex);
-
-  free (graph->rep);
-  free (graph->succs);
-  free (graph->pe);
-  free (graph->pe_rep);
-  free (graph->indirect_cycles);
-  free (graph);
-
-  varmap.release ();
-  free_alloc_pool (variable_info_pool);
-  free_alloc_pool (constraint_pool);
-
-  obstack_free (&fake_var_decl_obstack, NULL);
-
-  delete final_solutions;
-  obstack_free (&final_solutions_obstack, NULL);
-}
-
-/* Mark "other" loads and stores as belonging to CLIQUE and with
-   base zero.  */
-
-static bool
-visit_loadstore (gimple, tree base, tree ref, void *clique_)
-{
-  unsigned short clique = (uintptr_t)clique_;
-  if (TREE_CODE (base) == MEM_REF
-      || TREE_CODE (base) == TARGET_MEM_REF)
-    {
-      tree ptr = TREE_OPERAND (base, 0);
-      if (TREE_CODE (ptr) == SSA_NAME)
-	{
-	  /* ???  We need to make sure 'ptr' doesn't include any of
-	     the restrict tags in its points-to set.  */
-	  return false;
-	}
-
-      /* For now let decls through.  */
-
-      /* Do not overwrite existing cliques (that includes clique, base
-         pairs we just set).  */
-      if (MR_DEPENDENCE_CLIQUE (base) == 0)
-	{
-	  MR_DEPENDENCE_CLIQUE (base) = clique;
-	  MR_DEPENDENCE_BASE (base) = 0;
-	}
-    }
-
-  /* For plain decl accesses see whether they are accesses to globals
-     and rewrite them to MEM_REFs with { clique, 0 }.  */
-  if (TREE_CODE (base) == VAR_DECL
-      && is_global_var (base)
-      /* ???  We can't rewrite a plain decl with the walk_stmt_load_store
-	 ops callback.  */
-      && base != ref)
-    {
-      tree *basep = &ref;
-      while (handled_component_p (*basep))
-	basep = &TREE_OPERAND (*basep, 0);
-      gcc_assert (TREE_CODE (*basep) == VAR_DECL);
-      tree ptr = build_fold_addr_expr (*basep);
-      tree zero = build_int_cst (TREE_TYPE (ptr), 0);
-      *basep = build2 (MEM_REF, TREE_TYPE (*basep), ptr, zero);
-      MR_DEPENDENCE_CLIQUE (*basep) = clique;
-      MR_DEPENDENCE_BASE (*basep) = 0;
-    }
-
-  return false;
-}
-
-/* If REF is a MEM_REF then assign a clique, base pair to it, updating
-   CLIQUE, *RESTRICT_VAR and LAST_RUID.  Return whether dependence info
-   was assigned to REF.  */
-
-static bool
-maybe_set_dependence_info (tree ref, tree ptr,
-			   unsigned short &clique, varinfo_t restrict_var,
-			   unsigned short &last_ruid)
-{
-  while (handled_component_p (ref))
-    ref = TREE_OPERAND (ref, 0);
-  if ((TREE_CODE (ref) == MEM_REF
-       || TREE_CODE (ref) == TARGET_MEM_REF)
-      && TREE_OPERAND (ref, 0) == ptr)
-    {
-      /* Do not overwrite existing cliques.  This avoids overwriting dependence
-	 info inlined from a function with restrict parameters inlined
-	 into a function with restrict parameters.  This usually means we
-	 prefer to be precise in innermost loops.  */
-      if (MR_DEPENDENCE_CLIQUE (ref) == 0)
-	{
-	  if (clique == 0)
-	    clique = ++cfun->last_clique;
-	  if (restrict_var->ruid == 0)
-	    restrict_var->ruid = ++last_ruid;
-	  MR_DEPENDENCE_CLIQUE (ref) = clique;
-	  MR_DEPENDENCE_BASE (ref) = restrict_var->ruid;
-	  return true;
-	}
-    }
-  return false;
-}
-
-/* Compute the set of independend memory references based on restrict
-   tags and their conservative propagation to the points-to sets.  */
-
-static void
-compute_dependence_clique (void)
-{
-  unsigned short clique = 0;
-  unsigned short last_ruid = 0;
-  for (unsigned i = 0; i < num_ssa_names; ++i)
-    {
-      tree ptr = ssa_name (i);
-      if (!ptr || !POINTER_TYPE_P (TREE_TYPE (ptr)))
-	continue;
-
-      /* Avoid all this when ptr is not dereferenced?  */
-      tree p = ptr;
-      if (SSA_NAME_IS_DEFAULT_DEF (ptr)
-	  && (TREE_CODE (SSA_NAME_VAR (ptr)) == PARM_DECL
-	      || TREE_CODE (SSA_NAME_VAR (ptr)) == RESULT_DECL))
-	p = SSA_NAME_VAR (ptr);
-      varinfo_t vi = lookup_vi_for_tree (p);
-      if (!vi)
-	continue;
-      vi = get_varinfo (find (vi->id));
-      bitmap_iterator bi;
-      unsigned j;
-      varinfo_t restrict_var = NULL;
-      EXECUTE_IF_SET_IN_BITMAP (vi->solution, 0, j, bi)
-	{
-	  varinfo_t oi = get_varinfo (j);
-	  if (oi->is_restrict_var)
-	    {
-	      if (restrict_var)
-		{
-		  if (dump_file && (dump_flags & TDF_DETAILS))
-		    {
-		      fprintf (dump_file, "found restrict pointed-to "
-			       "for ");
-		      print_generic_expr (dump_file, ptr, 0);
-		      fprintf (dump_file, " but not exclusively\n");
-		    }
-		  restrict_var = NULL;
-		  break;
-		}
-	      restrict_var = oi;
-	    }
-	  /* NULL is the only other valid points-to entry.  */
-	  else if (oi->id != nothing_id)
-	    {
-	      restrict_var = NULL;
-	      break;
-	    }
-	}
-      /* Ok, found that ptr must(!) point to a single(!) restrict
-	 variable.  */
-      /* ???  PTA isn't really a proper propagation engine to compute
-	 this property.
-	 ???  We could handle merging of two restricts by unifying them.  */
-      if (restrict_var)
-	{
-	  /* Now look at possible dereferences of ptr.  */
-	  imm_use_iterator ui;
-	  gimple use_stmt;
-	  FOR_EACH_IMM_USE_STMT (use_stmt, ui, ptr)
-	    {
-	      /* ???  Calls and asms.  */
-	      if (!gimple_assign_single_p (use_stmt))
-		continue;
-	      maybe_set_dependence_info (gimple_assign_lhs (use_stmt), ptr,
-					 clique, restrict_var, last_ruid);
-	      maybe_set_dependence_info (gimple_assign_rhs1 (use_stmt), ptr,
-					 clique, restrict_var, last_ruid);
-	    }
-	}
-    }
-
-  if (clique == 0)
-    return;
-
-  /* Assign the BASE id zero to all accesses not based on a restrict
-     pointer.  That way they get disabiguated against restrict
-     accesses but not against each other.  */
-  /* ???  For restricts derived from globals (thus not incoming
-     parameters) we can't restrict scoping properly thus the following
-     is too aggressive there.  For now we have excluded those globals from
-     getting into the MR_DEPENDENCE machinery.  */
-  basic_block bb;
-  FOR_EACH_BB_FN (bb, cfun)
-    for (gimple_stmt_iterator gsi = gsi_start_bb (bb);
-	 !gsi_end_p (gsi); gsi_next (&gsi))
-      {
-	gimple stmt = gsi_stmt (gsi);
-	walk_stmt_load_store_ops (stmt, (void *)(uintptr_t)clique,
-				  visit_loadstore, visit_loadstore);
-      }
-}
-
-/* Compute points-to information for every SSA_NAME pointer in the
-   current function and compute the transitive closure of escaped
-   variables to re-initialize the call-clobber states of local variables.  */
-
-unsigned int
-compute_may_aliases (void)
-{
-  if (cfun->gimple_df->ipa_pta)
-    {
-      if (dump_file)
-	{
-	  fprintf (dump_file, "\nNot re-computing points-to information "
-		   "because IPA points-to information is available.\n\n");
-
-	  /* But still dump what we have remaining it.  */
-	  dump_alias_info (dump_file);
-	}
-
-      return 0;
-    }
-
-  /* For each pointer P_i, determine the sets of variables that P_i may
-     point-to.  Compute the reachability set of escaped and call-used
-     variables.  */
-  compute_points_to_sets ();
-
-  /* Debugging dumps.  */
-  if (dump_file)
-    dump_alias_info (dump_file);
-
-  /* Compute restrict-based memory disambiguations.  */
-  compute_dependence_clique ();
-
-  /* Deallocate memory used by aliasing data structures and the internal
-     points-to solution.  */
-  delete_points_to_sets ();
-
-  gcc_assert (!need_ssa_update_p (cfun));
-
-  return 0;
-}
-
-/* A dummy pass to cause points-to information to be computed via
-   TODO_rebuild_alias.  */
-
-namespace {
-
-const pass_data pass_data_build_alias =
-{
-  GIMPLE_PASS, /* type */
-  "alias", /* name */
-  OPTGROUP_NONE, /* optinfo_flags */
-  TV_NONE, /* tv_id */
-  ( PROP_cfg | PROP_ssa ), /* properties_required */
-  0, /* properties_provided */
-  0, /* properties_destroyed */
-  0, /* todo_flags_start */
-  TODO_rebuild_alias, /* todo_flags_finish */
-};
-
-class pass_build_alias : public gimple_opt_pass
-{
-public:
-  pass_build_alias (gcc::context *ctxt)
-    : gimple_opt_pass (pass_data_build_alias, ctxt)
-  {}
-
-  /* opt_pass methods: */
-  virtual bool gate (function *) { return flag_tree_pta; }
-
-}; // class pass_build_alias
-
-} // anon namespace
-
-gimple_opt_pass *
-make_pass_build_alias (gcc::context *ctxt)
-{
-  return new pass_build_alias (ctxt);
-}
-
-/* A dummy pass to cause points-to information to be computed via
-   TODO_rebuild_alias.  */
-
-namespace {
-
-const pass_data pass_data_build_ealias =
-{
-  GIMPLE_PASS, /* type */
-  "ealias", /* name */
-  OPTGROUP_NONE, /* optinfo_flags */
-  TV_NONE, /* tv_id */
-  ( PROP_cfg | PROP_ssa ), /* properties_required */
-  0, /* properties_provided */
-  0, /* properties_destroyed */
-  0, /* todo_flags_start */
-  TODO_rebuild_alias, /* todo_flags_finish */
-};
-
-class pass_build_ealias : public gimple_opt_pass
-{
-public:
-  pass_build_ealias (gcc::context *ctxt)
-    : gimple_opt_pass (pass_data_build_ealias, ctxt)
-  {}
-
-  /* opt_pass methods: */
-  virtual bool gate (function *) { return flag_tree_pta; }
-
-}; // class pass_build_ealias
-
-} // anon namespace
-
-gimple_opt_pass *
-make_pass_build_ealias (gcc::context *ctxt)
-{
-  return new pass_build_ealias (ctxt);
-}
-
-
 /* IPA PTA solutions for ESCAPED.  */
-struct pt_solution ipa_escaped_pt
-  = { true, false, false, false, false, false, false, false, NULL, 0 };
+struct pt_solution ik_ipa_escaped_pt
+  = { true, false, false, false, false, false, false, false, NULL, NULL, 0 };
 
 /* Associate node with varinfo DATA. Worker for
    cgraph_for_node_and_aliases.  */
@@ -7330,7 +6885,7 @@ associate_varinfo_to_alias (struct cgraph_node *node, void *data)
 
 /* Execute the driver for IPA PTA.  */
 static unsigned int
-ipa_pta_execute (void)
+ipa_kpta_execute (void)
 {
   struct cgraph_node *node;
   varpool_node *var;
@@ -7342,6 +6897,9 @@ ipa_pta_execute (void)
   if (dump_file) {
     glob_ipa_dump = dump_begin (TDI_krakonos, NULL);
   }
+
+  /* Prepare the BloomapFamily */
+  family = BloomapFamily::forElementsAndProb(2048, 0.001);
 
   init_alias_vars ();
 
@@ -7481,12 +7039,12 @@ ipa_pta_execute (void)
      ???  Note that the computed escape set is not correct
      for the whole unit as we fail to consider graph edges to
      externally visible functions.  */
-  ipa_escaped_pt = find_what_var_points_to (get_varinfo (escaped_id));
+  ik_ipa_escaped_pt = find_what_var_points_to (get_varinfo (escaped_id));
 
   /* Make sure the ESCAPED solution (which is used as placeholder in
      other solutions) does not reference itself.  This simplifies
      points-to solution queries.  */
-  ipa_escaped_pt.ipa_escaped = 0;
+  ik_ipa_escaped_pt.ipa_escaped = 0;
 
   /* Assign the points-to sets to the SSA names in the unit.  */
   FOR_EACH_DEFINED_FUNCTION (node)
@@ -7560,7 +7118,7 @@ ipa_pta_execute (void)
 		    {
 		      /* If there is nothing special about this call then
 			 we have made everything that is used also escape.  */
-		      *pt = ipa_escaped_pt;
+		      *pt = ik_ipa_escaped_pt;
 		      pt->nonlocal = 1;
 		    }
 
@@ -7581,7 +7139,7 @@ ipa_pta_execute (void)
 		    {
 		      /* If there is nothing special about this call then
 			 we have made everything that is used also escape.  */
-		      *pt = ipa_escaped_pt;
+		      *pt = ik_ipa_escaped_pt;
 		      pt->nonlocal = 1;
 		    }
 		}
@@ -7598,8 +7156,8 @@ ipa_pta_execute (void)
 		      || bitmap_bit_p (fi->solution, nonlocal_id)
 		      || bitmap_bit_p (fi->solution, escaped_id))
 		    {
-		      pt_solution_reset (gimple_call_clobber_set (stmt));
-		      pt_solution_reset (gimple_call_use_set (stmt));
+		      ik_pt_solution_reset (gimple_call_clobber_set (stmt));
+		      ik_pt_solution_reset (gimple_call_use_set (stmt));
 		    }
 		  else
 		    {
@@ -7630,13 +7188,13 @@ ipa_pta_execute (void)
 			    {
 			      sol = find_what_var_points_to
 				      (first_vi_for_offset (vi, fi_uses));
-			      pt_solution_ior_into (uses, &sol);
+			      ik_pt_solution_ior_into (uses, &sol);
 			    }
 			  if (!clobbers->anything)
 			    {
 			      sol = find_what_var_points_to
 				      (first_vi_for_offset (vi, fi_clobbers));
-			      pt_solution_ior_into (clobbers, &sol);
+			      ik_pt_solution_ior_into (clobbers, &sol);
 			    }
 			}
 		    }
@@ -7656,10 +7214,10 @@ ipa_pta_execute (void)
 
 namespace {
 
-const pass_data pass_data_ipa_pta =
+const pass_data pass_data_ipa_kpta =
 {
   SIMPLE_IPA_PASS, /* type */
-  "pta", /* name */
+  "kpta", /* name */
   OPTGROUP_NONE, /* optinfo_flags */
   TV_IPA_PTA, /* tv_id */
   0, /* properties_required */
@@ -7670,30 +7228,30 @@ const pass_data pass_data_ipa_pta =
 };
 
 
-class pass_ipa_pta : public simple_ipa_opt_pass
+class pass_ipa_kpta : public simple_ipa_opt_pass
 {
 public:
-  pass_ipa_pta (gcc::context *ctxt)
-    : simple_ipa_opt_pass (pass_data_ipa_pta, ctxt)
+  pass_ipa_kpta (gcc::context *ctxt)
+    : simple_ipa_opt_pass (pass_data_ipa_kpta, ctxt)
   {}
 
   /* opt_pass methods: */
   virtual bool gate (function *)
     {
       return (optimize
-	      && flag_ipa_pta
+	      && flag_ipa_kpta
 	      /* Don't bother doing anything if the program has errors.  */
 	      && !seen_error ());
     }
 
-  virtual unsigned int execute (function *) { return ipa_pta_execute (); }
+  virtual unsigned int execute (function *) { return ipa_kpta_execute (); }
 
-}; // class pass_ipa_pta
+}; // class pass_ipa_kpta
 
 } // anon namespace
 
 simple_ipa_opt_pass *
-make_pass_ipa_pta (gcc::context *ctxt)
+make_pass_ipa_kpta (gcc::context *ctxt)
 {
-  return new pass_ipa_pta (ctxt);
+  return new pass_ipa_kpta (ctxt);
 }

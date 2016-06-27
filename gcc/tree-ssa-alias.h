@@ -21,6 +21,8 @@
 #ifndef TREE_SSA_ALIAS_H
 #define TREE_SSA_ALIAS_H
 
+class GTY(()) Bloomap;
+
 /* The points-to solution.
 
    The points-to solution is a union of pt_vars and the abstract
@@ -57,7 +59,8 @@ struct GTY(()) pt_solution
   unsigned int vars_contains_escaped_heap : 1;
 
   /* Set of variables that this pointer may point to.  */
-  bitmap vars;
+  bitmap vars; /* KTODO: cfgexpand.c needs to be updated to use avars */
+  Bloomap *avars;
 
   /* representative varid */
   unsigned varid;
@@ -157,6 +160,7 @@ extern void pt_solution_set_var (struct pt_solution *, tree);
 extern void dump_pta_stats (FILE *);
 
 extern GTY(()) struct pt_solution ipa_escaped_pt;
+extern GTY(()) struct pt_solution ik_ipa_escaped_pt;
 
 /* Return true, if the two ranges [POS1, SIZE1] and [POS2, SIZE2]
    overlap.  SIZE1 and/or SIZE2 can be (unsigned)-1 in which case the

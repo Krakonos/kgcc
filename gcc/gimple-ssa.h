@@ -110,6 +110,9 @@ struct GTY(()) gimple_df {
   /* True if IPA points-to information was computed for this function.  */
   unsigned int ipa_pta : 1;
 
+  /* DITTO for KPTA */
+  unsigned int ipa_kpta : 1;
+
   struct ssa_operands ssa_operands;
 
   /* Map gimple stmt to tree label (or list of labels) for transaction
