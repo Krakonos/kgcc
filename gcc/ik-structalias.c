@@ -257,6 +257,8 @@ static bitmap_obstack iteration_obstack;
 
 BloomapFamily *family;
 
+#define BLOOMAP_FREE(map) do { delete map; map = NULL; } while (0);
+
 static unsigned int create_variable_info_for (tree, const char *);
 typedef struct constraint_graph *constraint_graph_t;
 static void unify_nodes (constraint_graph_t, unsigned int, unsigned int, bool);
@@ -345,13 +347,13 @@ struct variable_info
   tree decl;
 
   /* Points-to set for this variable.  */
-  bitmap solution;
+  bitmap x_solution;
 
   Bloomap* b_solution;
   Bloomap* b_oldsolution;
 
   /* Old points-to set for this variable.  */
-  bitmap oldsolution;
+  bitmap x_oldsolution;
 };
 typedef struct variable_info *varinfo_t;
 
@@ -388,6 +390,27 @@ static inline varinfo_t
 vi_next (varinfo_t vi)
 {
   return get_varinfo (vi->next);
+}
+
+/* Bloomap & bitmap interaction helpers */
+
+static bool bloomap_copy_to_bitmap(bitmap bitmap, Bloomap *bloomap) {
+    bool changed = false;
+    unsigned e;
+    BLOOMAP_FOR_EACH(e, bloomap) {
+	changed |= bitmap_set_bit(bitmap, e);
+    }
+    return changed;
+}
+
+static bool bloomap_ior_bitmap(Bloomap* bloomap, bitmap bitmap) {
+	bool changed = false;
+	bitmap_iterator bi;
+	unsigned i;
+	EXECUTE_IF_SET_IN_BITMAP(bitmap, 0, i, bi) {
+		changed |= bloomap->add(i);
+	}
+	return changed;
 }
 
 /* Static IDs for the special variables.  Variable ID zero is unused
@@ -427,8 +450,8 @@ new_var_info (tree t, const char *name)
 			     as escape points.  */
 			  || (TREE_CODE (t) == VAR_DECL
 			      && DECL_HARD_REGISTER (t)));
-  ret->solution = BITMAP_ALLOC (&pta_obstack);
-  ret->oldsolution = NULL;
+  ret->x_solution = BITMAP_ALLOC (&pta_obstack);
+  ret->x_oldsolution = NULL;
   ret->b_solution = family->newMap();
   ret->b_oldsolution = NULL;
   ret->next = 0;
@@ -1010,7 +1033,7 @@ solution_set_expand (bitmap set, bitmap *expanded)
 
 /* KTODO:bloomap add bloomap variant */
 static bool
-set_union_with_increment  (bitmap to, bitmap delta, HOST_WIDE_INT inc,
+set_union_with_increment  (Bloomap* to, bitmap delta, HOST_WIDE_INT inc,
 			   bitmap *expanded_delta)
 {
   bool changed = false;
@@ -1020,14 +1043,22 @@ set_union_with_increment  (bitmap to, bitmap delta, HOST_WIDE_INT inc,
   /* If the solution of DELTA contains anything it is good enough to transfer
      this to TO.  */
   if (bitmap_bit_p (delta, anything_id))
-    return bitmap_set_bit (to, anything_id);
+    return to->add(anything_id);
 
   /* If the offset is unknown we have to expand the solution to
      all subfields.  */
   if (inc == UNKNOWN_OFFSET)
     {
       delta = solution_set_expand (delta, expanded_delta);
-      changed |= bitmap_ior_into (to, delta);
+
+      {
+	  bitmap_iterator dbi;
+	  unsigned int di;
+	  EXECUTE_IF_SET_IN_BITMAP(delta, 0, di, dbi) {
+	      /* KTODO: Perhaps add function to do this? */
+	  	changed |= to->add(di);
+	  }
+      }
       return changed;
     }
 
@@ -1041,7 +1072,7 @@ set_union_with_increment  (bitmap to, bitmap delta, HOST_WIDE_INT inc,
       if (vi->is_artificial_var
 	  || vi->is_unknown_size_var
 	  || vi->is_full_var)
-	changed |= bitmap_set_bit (to, i);
+	changed |= to->add(i);
       else
 	{
 	  HOST_WIDE_INT fieldoffset = vi->offset + inc;
@@ -1056,7 +1087,7 @@ set_union_with_increment  (bitmap to, bitmap delta, HOST_WIDE_INT inc,
 
 	  do
 	    {
-	      changed |= bitmap_set_bit (to, vi->id);
+	      changed |= to->add(vi->id);
 	      if (vi->is_full_var
 		  || vi->next == 0)
 		break;
@@ -1391,7 +1422,7 @@ build_succ_graph (void)
 	{
 	  /* x = &y */
 	  gcc_checking_assert (find (rhs.var) == rhs.var);
-	  bitmap_set_bit (get_varinfo (lhsvar)->solution, rhsvar);
+	  /// bitmap_set_bit (get_varinfo (lhsvar)->solution, rhsvar);
 	  get_varinfo(lhsvar)->b_solution->add( rhsvar );
 	}
       else if (lhsvar > anything_id
@@ -1554,24 +1585,25 @@ unify_nodes (constraint_graph_t graph, unsigned int to, unsigned int from,
     bitmap_set_bit (changed, to);
   varinfo_t fromvi = get_varinfo (from);
   /* KTODO:bloomap Add bloomap handling */
-  if (fromvi->solution)
+  if (fromvi->b_solution)
     {
       /* If the solution changes because of the merging, we need to mark
 	 the variable as changed.  */
       varinfo_t tovi = get_varinfo (to);
-      if (bitmap_ior_into (tovi->solution, fromvi->solution))
+      ///if (bitmap_ior_into (tovi->solution, fromvi->solution))
+      if (tovi->b_solution->add(fromvi->b_solution))
 	{
 	  if (update_changed)
 	    bitmap_set_bit (changed, to);
 	}
 
-      BITMAP_FREE (fromvi->solution);
-      if (fromvi->oldsolution)
-	BITMAP_FREE (fromvi->oldsolution);
+      BLOOMAP_FREE (fromvi->b_solution);
+      if (fromvi->b_oldsolution)
+	BLOOMAP_FREE (fromvi->b_oldsolution);
 
       if (stats.iterations > 0
-	  && tovi->oldsolution)
-	BITMAP_FREE (tovi->oldsolution);
+	  && tovi->b_oldsolution)
+	BLOOMAP_FREE (tovi->b_oldsolution);
     }
   if (graph->succs[to])
     bitmap_clear_bit (graph->succs[to], to);
@@ -1644,7 +1676,7 @@ do_sd_constraint (constraint_graph_t graph, constraint_t c,
 {
   unsigned int lhs = c->lhs.var;
   bool flag = false;
-  bitmap sol = get_varinfo (lhs)->solution;
+  Bloomap* sol = get_varinfo(lhs)->b_solution;
   unsigned int j;
   bitmap_iterator bi;
   HOST_WIDE_INT roffset = c->rhs.offset;
@@ -1656,7 +1688,7 @@ do_sd_constraint (constraint_graph_t graph, constraint_t c,
      this to the LHS.  */
   if (bitmap_bit_p (delta, anything_id))
     {
-      flag |= bitmap_set_bit (sol, anything_id);
+      flag |= sol->add( anything_id );
       goto done;
     }
 
@@ -1698,14 +1730,14 @@ do_sd_constraint (constraint_graph_t graph, constraint_t c,
 	  /* Adding edges from the special vars is pointless.
 	     They don't have sets that can change.  */
 	  if (get_varinfo (t)->is_special_var)
-	    flag |= bitmap_ior_into (sol, get_varinfo (t)->solution);
+	    flag |= sol->add(get_varinfo (t)->b_solution);
 	  /* Merging the solution from ESCAPED needlessly increases
 	     the set.  Use ESCAPED as representative instead.  */
 	  else if (v->id == escaped_id)
-	    flag |= bitmap_set_bit (sol, escaped_id);
+	    flag |= sol->add(escaped_id);
 	  else if (v->may_have_pointers
 		   && add_graph_edge (graph, lhs, t))
-	    flag |= bitmap_ior_into (sol, get_varinfo (t)->solution);
+	    flag |= sol->add(get_varinfo (t)->b_solution);
 
 	  if (v->is_full_var
 	      || v->next == 0)
@@ -1720,7 +1752,7 @@ done:
   /* If the LHS solution changed, mark the var as changed.  */
   if (flag)
     {
-      get_varinfo (lhs)->solution = sol;
+      get_varinfo (lhs)->b_solution = sol;
       bitmap_set_bit (changed, lhs);
     }
 }
@@ -1732,7 +1764,7 @@ static void
 do_ds_constraint (constraint_t c, bitmap delta, bitmap *expanded_delta)
 {
   unsigned int rhs = c->rhs.var;
-  bitmap sol = get_varinfo (rhs)->solution;
+  Bloomap *sol = get_varinfo(rhs)->b_solution;
   unsigned int j;
   bitmap_iterator bi;
   HOST_WIDE_INT loff = c->lhs.offset;
@@ -1743,8 +1775,8 @@ do_ds_constraint (constraint_t c, bitmap delta, bitmap *expanded_delta)
 
   /* If the solution of y contains ANYTHING simply use the ANYTHING
      solution.  This avoids needlessly increasing the points-to sets.  */
-  if (bitmap_bit_p (sol, anything_id))
-    sol = get_varinfo (find (anything_id))->solution;
+  if (sol->contains(anything_id))
+    sol = get_varinfo (find (anything_id))->b_solution;
 
   /* If the solution for x contains ANYTHING we have to merge the
      solution of y into all pointer variables which we do via
@@ -1754,7 +1786,7 @@ do_ds_constraint (constraint_t c, bitmap delta, bitmap *expanded_delta)
       unsigned t = find (storedanything_id);
       if (add_graph_edge (graph, t, rhs))
 	{
-	  if (bitmap_ior_into (get_varinfo (t)->solution, sol))
+	  if (get_varinfo (t)->b_solution->add(sol))
 	    bitmap_set_bit (changed, t);
 	}
       return;
@@ -1800,7 +1832,7 @@ do_ds_constraint (constraint_t c, bitmap delta, bitmap *expanded_delta)
 		{
 		  t = find (escaped_id);
 		  if (add_graph_edge (graph, t, rhs)
-		      && bitmap_ior_into (get_varinfo (t)->solution, sol))
+		      && get_varinfo(t)->b_solution->add(sol))
 		    bitmap_set_bit (changed, t);
 		  /* Enough to let rhs escape once.  */
 		  escaped_p = true;
@@ -1811,7 +1843,7 @@ do_ds_constraint (constraint_t c, bitmap delta, bitmap *expanded_delta)
 
 	      t = find (v->id);
 	      if (add_graph_edge (graph, t, rhs)
-		  && bitmap_ior_into (get_varinfo (t)->solution, sol))
+		  && get_varinfo(t)->b_solution->add(sol))
 		bitmap_set_bit (changed, t);
 	    }
 
@@ -1852,12 +1884,12 @@ do_complex_constraint (constraint_graph_t graph, constraint_t c, bitmap delta,
     }
   else
     {
-      bitmap tmp;
+      Bloomap* tmp;
       bool flag = false;
 
       gcc_checking_assert (c->rhs.type == SCALAR && c->lhs.type == SCALAR
 			   && c->rhs.offset != 0 && c->lhs.offset == 0);
-      tmp = get_varinfo (c->lhs.var)->solution;
+      tmp = get_varinfo (c->lhs.var)->b_solution;
 
       flag = set_union_with_increment (tmp, delta, c->rhs.offset,
 				       expanded_delta);
@@ -2655,19 +2687,22 @@ static bool
 eliminate_indirect_cycles (unsigned int node)
 {
   if (graph->indirect_cycles[node] != -1
-      && !bitmap_empty_p (get_varinfo (node)->solution))
+      && !get_varinfo (node)->b_solution->isEmpty())
     {
       unsigned int i;
       auto_vec<unsigned> queue;
       int queuepos;
       unsigned int to = find (graph->indirect_cycles[node]);
-      bitmap_iterator bi;
+      //bitmap_iterator bi;
 
       /* We can't touch the solution set and call unify_nodes
 	 at the same time, because unify_nodes is going to do
 	 bitmap unions into it. */
 
-      EXECUTE_IF_SET_IN_BITMAP (get_varinfo (node)->solution, 0, i, bi)
+      /* KTODO: This probably needs to be fixed/removed. Oh well. */
+      //EXECUTE_IF_SET_IN_BITMAP (get_varinfo (node)->solution, 0, i, bi)
+      Bloomap* sol = get_varinfo(node)->b_solution;
+      BLOOMAP_FOR_EACH(i, sol )
 	{
 	  if (find (i) == i && i != to)
 	    {
@@ -2707,7 +2742,7 @@ solve_graph (constraint_graph_t graph)
   for (i = 1; i < size; i++)
     {
       varinfo_t ivi = get_varinfo (i);
-      if (find (i) == i && !bitmap_empty_p (ivi->solution)
+      if (find (i) == i && !ivi->b_solution->isEmpty()
 	  && ((graph->succs[i] && !bitmap_empty_p (graph->succs[i]))
 	      || graph->complex[i].length () > 0))
 	bitmap_set_bit (changed, i);
@@ -2746,31 +2781,41 @@ solve_graph (constraint_graph_t graph)
 	    {
 	      unsigned int j;
 	      constraint_t c;
-	      bitmap solution;
+	      Bloomap* solution;
 	      vec<constraint_t> complex = graph->complex[i];
 	      varinfo_t vi = get_varinfo (i);
 	      bool solution_empty;
 
+	      /* Here the 'pts' variable is the list of new pointers in the set.
+	       * With classical bitmap, it's worth computing the difference and working with that,
+	       * but it's probably not too smart with bloomaps.
+	       *
+	       * KTODO: Change 'pts' to bloomap.
+	       */
+
 	      /* Compute the changed set of solution bits.  If anything
 	         is in the solution just propagate that.  */
-	      if (bitmap_bit_p (vi->solution, anything_id))
+	      if (vi->b_solution->contains(anything_id))
 		{
 		  /* If anything is also in the old solution there is
 		     nothing to do.
 		     ???  But we shouldn't ended up with "changed" set ...  */
-		  if (vi->oldsolution
-		      && bitmap_bit_p (vi->oldsolution, anything_id))
+		  if (vi->b_oldsolution
+		      && vi->b_oldsolution->contains(anything_id))
 		    continue;
-		  bitmap_copy (pts, get_varinfo (find (anything_id))->solution);
+		  bloomap_copy_to_bitmap(pts, get_varinfo(find(anything_id))->b_solution);
 		}
-	      else if (vi->oldsolution)
-		bitmap_and_compl (pts, vi->solution, vi->oldsolution);
-	      else
-		bitmap_copy (pts, vi->solution);
+	      else/* KTODO: try to do the difference */
+		 // if (vi->oldsolution)
+		//bitmap_and_compl (pts, vi->solution, vi->oldsolution);
+	      //else
+		bloomap_copy_to_bitmap (pts, vi->b_solution);
 
 	      if (bitmap_empty_p (pts))
 		continue;
 
+	      /* Since we are not using the oldsolution, we don't need to create it */
+	      /*
 	      if (vi->oldsolution)
 		bitmap_ior_into (vi->oldsolution, pts);
 	      else
@@ -2778,9 +2823,10 @@ solve_graph (constraint_graph_t graph)
 		  vi->oldsolution = BITMAP_ALLOC (&oldpta_obstack);
 		  bitmap_copy (vi->oldsolution, pts);
 		}
+		*/
 
-	      solution = vi->solution;
-	      solution_empty = bitmap_empty_p (solution);
+	      solution = vi->b_solution;
+	      solution_empty = solution->isEmpty();
 
 	      /* Process the complex constraints */
 	      bitmap expanded_pts = NULL;
@@ -2802,7 +2848,7 @@ solve_graph (constraint_graph_t graph)
 		}
 	      BITMAP_FREE (expanded_pts);
 
-	      solution_empty = bitmap_empty_p (solution);
+	      solution_empty = solution->isEmpty();
 
 	      if (!solution_empty)
 		{
@@ -2813,11 +2859,11 @@ solve_graph (constraint_graph_t graph)
 		  EXECUTE_IF_IN_NONNULL_BITMAP (graph->succs[i],
 						0, j, bi)
 		    {
-		      bitmap tmp;
+		      Bloomap* tmp;
 		      bool flag;
 
 		      unsigned int to = find (j);
-		      tmp = get_varinfo (to)->solution;
+		      tmp = get_varinfo (to)->b_solution;
 		      flag = false;
 
 		      /* Don't try to propagate to ourselves.  */
@@ -2827,9 +2873,9 @@ solve_graph (constraint_graph_t graph)
 		      /* If we propagate from ESCAPED use ESCAPED as
 		         placeholder.  */
 		      if (i == eff_escaped_id)
-			flag = bitmap_set_bit (tmp, escaped_id);
+			flag = tmp->add(escaped_id);
 		      else
-			flag = bitmap_ior_into (tmp, pts);
+			flag = bloomap_ior_bitmap (tmp, pts);
 
 		      if (flag)
 			bitmap_set_bit (changed, to);
@@ -5852,18 +5898,14 @@ static void
 dump_solution_for_var (FILE *file, unsigned int var)
 {
   varinfo_t vi = get_varinfo (var);
-  unsigned int i;
-  bitmap_iterator bi;
+  //unsigned int i;
+  //bitmap_iterator bi;
 
   /* Dump the solution for unified vars anyway, this avoids difficulties
      in scanning dumps in the testsuite.  */
   fprintf (file, "%s = { ", vi->name);
   vi = get_varinfo (find (var));
-  unsigned set_size = 0;
-  EXECUTE_IF_SET_IN_BITMAP (vi->solution, 0, i, bi) {
-    set_size++;
-    //fprintf (file, "%s ", get_varinfo (i)->name); /* TODO: This might be a problem for big stuff like firefox, as the log files become HUGE */
-  }
+  unsigned set_size = vi->b_solution->popcount(); /*FIXME: This isn't size. It should at least be normalized somehow... */
   fprintf (file, "}");
 
   if (glob_ipa_dump) {
@@ -6055,7 +6097,7 @@ set_uids_in_ptset (bitmap into, bitmap from, struct pt_solution *pt)
   bitmap_iterator bi;
   varinfo_t escaped_vi = get_varinfo (find (escaped_id));
   bool everything_escaped
-    = escaped_vi->solution && bitmap_bit_p (escaped_vi->solution, anything_id);
+    = escaped_vi->b_solution && escaped_vi->b_solution->contains(anything_id);
 
   EXECUTE_IF_SET_IN_BITMAP (from, 0, i, bi)
     {
@@ -6067,8 +6109,8 @@ set_uids_in_ptset (bitmap into, bitmap from, struct pt_solution *pt)
 	continue;
 
       if (everything_escaped
-	  || (escaped_vi->solution
-	      && bitmap_bit_p (escaped_vi->solution, i)))
+	  || (escaped_vi->b_solution
+	      && escaped_vi->b_solution->contains(i)))
 	{
 	  pt->vars_contains_escaped = true;
 	  pt->vars_contains_escaped_heap = vi->is_heap_var;
@@ -6096,6 +6138,7 @@ set_uids_in_ptset (bitmap into, bitmap from, struct pt_solution *pt)
 
 /* Compute the points-to solution *PT for the variable VI.  */
 
+#if 0
 static struct pt_solution
 find_what_var_points_to (varinfo_t orig_vi)
 {
@@ -6206,6 +6249,7 @@ find_what_p_points_to (tree p)
   pi = get_ptr_info (p);
   pi->pt = find_what_var_points_to (vi);
 }
+#endif
 
 
 /* Query statistics for points-to solutions.  */
@@ -7034,6 +7078,8 @@ ipa_kpta_execute (void)
 
   /* From the constraints compute the points-to sets.  */
   solve_constraints ();
+#if 0
+
 
   /* Compute the global points-to sets for ESCAPED.
      ???  Note that the computed escape set is not correct
@@ -7204,6 +7250,7 @@ ipa_kpta_execute (void)
 
       fn->gimple_df->ipa_pta = true;
     }
+#endif
 
   //delete_points_to_sets (); // KTODO: WTF?
 
