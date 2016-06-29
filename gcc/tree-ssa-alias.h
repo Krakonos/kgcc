@@ -59,8 +59,8 @@ struct GTY(()) pt_solution
   unsigned int vars_contains_escaped_heap : 1;
 
   /* Set of variables that this pointer may point to.  */
-  bitmap vars; /* KTODO: cfgexpand.c needs to be updated to use avars */
-  Bloomap *avars;
+  bitmap vars; /* KTODO: cfgexpand.c needs to be updated to use b_vars, though it's probably correct if vars = NULL */
+  Bloomap *b_vars;
 
   /* representative varid */
   unsigned varid;

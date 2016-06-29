@@ -6138,15 +6138,11 @@ set_uids_in_ptset (bitmap into, bitmap from, struct pt_solution *pt)
 
 /* Compute the points-to solution *PT for the variable VI.  */
 
-#if 0
 static struct pt_solution
 find_what_var_points_to (varinfo_t orig_vi)
 {
-  /* KTODO:add_bloomap */
-  unsigned int i;
-  bitmap_iterator bi;
-  bitmap finished_solution;
-  bitmap result;
+  //bitmap finished_solution;
+  //bitmap result;
   varinfo_t vi;
   struct pt_solution *pt;
 
@@ -6164,38 +6160,22 @@ find_what_var_points_to (varinfo_t orig_vi)
 
   /* Translate artificial variables into SSA_NAME_PTR_INFO
      attributes.  */
-  EXECUTE_IF_SET_IN_BITMAP (vi->solution, 0, i, bi)
-    {
-      varinfo_t vi = get_varinfo (i);
-
-      if (vi->is_artificial_var)
-	{
-	  if (vi->id == nothing_id)
-	    pt->null = 1;
-	  else if (vi->id == escaped_id)
-	    {
-	      if (in_ipa_mode)
-		pt->ipa_escaped = 1;
-	      else
-		pt->escaped = 1;
-	      /* Expand some special vars of ESCAPED in-place here.  */
-	      varinfo_t evi = get_varinfo (find (escaped_id));
-	      if (bitmap_bit_p (evi->solution, nonlocal_id))
-		pt->nonlocal = 1;
-	    }
-	  else if (vi->id == nonlocal_id)
-	    pt->nonlocal = 1;
-	  else if (vi->is_heap_var)
-	    /* We represent heapvars in the points-to set properly.  */
-	    ;
-	  else if (vi->id == string_id)
-	    /* Nobody cares - STRING_CSTs are read-only entities.  */
-	    ;
-	  else if (vi->id == anything_id
-		   || vi->id == integer_id)
-	    pt->anything = 1;
-	}
-    }
+  if (vi->b_solution->contains(nothing_id)) {
+      pt->null = 1;
+  }
+  if (vi->b_solution->contains(escaped_id)) {
+      pt->ipa_escaped = 1;
+      /* Expand some special vars of ESCAPED in-place here.  */
+      varinfo_t evi = get_varinfo (find (escaped_id));
+      if (evi->b_solution->contains(nonlocal_id))
+	  pt->nonlocal = 1;
+  }
+  if (vi->b_solution->contains(nonlocal_id)) {
+      pt->nonlocal = 1;
+  }
+  if (vi->b_solution->contains(anything_id) || vi->b_solution->contains(integer_id)) {
+	pt->anything = 1;
+  }
 
   /* Instead of doing extra work, simply do not create
      elaborate points-to information for pt_anything pointers.  */
@@ -6204,7 +6184,11 @@ find_what_var_points_to (varinfo_t orig_vi)
     return *pt;
   }
 
+  pt->b_vars = vi->b_solution;
+
   /* Share the final set of variables when possible.  */
+  /* KTODO: Deduplication might or might not be a great idea */
+  /*
   finished_solution = BITMAP_GGC_ALLOC ();
   stats.points_to_sets_created++;
 
@@ -6220,6 +6204,7 @@ find_what_var_points_to (varinfo_t orig_vi)
       pt->vars = result;
       bitmap_clear (finished_solution);
     }
+  */
 
   pt->varid = vi->id;
   return *pt;
@@ -6249,7 +6234,6 @@ find_what_p_points_to (tree p)
   pi = get_ptr_info (p);
   pi->pt = find_what_var_points_to (vi);
 }
-#endif
 
 
 /* Query statistics for points-to solutions.  */
@@ -7078,7 +7062,6 @@ ipa_kpta_execute (void)
 
   /* From the constraints compute the points-to sets.  */
   solve_constraints ();
-#if 0
 
 
   /* Compute the global points-to sets for ESCAPED.
@@ -7198,9 +7181,9 @@ ipa_kpta_execute (void)
 		  fi = get_varinfo (find (fi->id));
 		  /* If we cannot constrain the set of functions we'll end up
 		     calling we end up using/clobbering everything.  */
-		  if (bitmap_bit_p (fi->solution, anything_id)
-		      || bitmap_bit_p (fi->solution, nonlocal_id)
-		      || bitmap_bit_p (fi->solution, escaped_id))
+		  if (fi->b_solution->contains(anything_id)
+		      || fi->b_solution->contains(nonlocal_id)
+		      || fi->b_solution->contains(escaped_id))
 		    {
 		      ik_pt_solution_reset (gimple_call_clobber_set (stmt));
 		      ik_pt_solution_reset (gimple_call_use_set (stmt));
@@ -7215,6 +7198,12 @@ ipa_kpta_execute (void)
 		      clobbers = gimple_call_clobber_set (stmt);
 		      memset (uses, 0, sizeof (struct pt_solution));
 		      memset (clobbers, 0, sizeof (struct pt_solution));
+		      /* KTODO: Do something smart here. */
+		      uses->nonlocal = 1;
+		      uses->ipa_escaped = 1;
+		      clobbers->nonlocal = 1;
+		      clobbers->ipa_escaped = 1;
+#if 0 
 		      EXECUTE_IF_SET_IN_BITMAP (fi->solution, 0, i, bi)
 			{
 			  struct pt_solution sol;
@@ -7243,6 +7232,7 @@ ipa_kpta_execute (void)
 			      ik_pt_solution_ior_into (clobbers, &sol);
 			    }
 			}
+#endif
 		    }
 		}
 	    }
@@ -7250,7 +7240,6 @@ ipa_kpta_execute (void)
 
       fn->gimple_df->ipa_pta = true;
     }
-#endif
 
   //delete_points_to_sets (); // KTODO: WTF?
 
