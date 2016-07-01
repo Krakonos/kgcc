@@ -58,6 +58,7 @@ export CXXFLAGS="$CFLAGS"
 export LDFLAGS="$CFLAGS"
 export CXX="ccache g++"
 export CC="ccache gcc"
+export PATH="/opt/autoconf/2.64/bin:$PATH"
 
 if [ $DO_REBUILD -eq 1 ]; then
 	echo "Doing full rebuild. The directory '$BDIR' will be removed in 5 seconds...."
@@ -69,7 +70,7 @@ fi
 if [ ! -d "$BDIR" ]; then
 	mkdir "$BDIR"
 	cd "$BDIR"
-	../configure --prefix=$HOME/kgcc/$BRANCH --enable-languages=c++,c --disable-bootstrap --enable-maintainer-mode || die "configure failed"
+	../configure --prefix=$HOME/kgcc/$BRANCH --enable-languages=c++,c --disable-bootstrap --enable-maintainer-mode --disable-multilib || die "configure failed"
 else
 	echo "Build directory already exists, skipping configure phase. Pass '-r' to do a full rebuild."
 	cd "$BDIR"
