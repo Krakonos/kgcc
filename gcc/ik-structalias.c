@@ -989,9 +989,16 @@ constraint_set_union (vec<constraint_t> *to,
 
 /* Expands the solution in SET to all sub-fields of variables included.  */
 
-/* KNOTE: the expanded set seems to be very short lived, but it might be required to write a bloomap variant for the 'set' variable. */
+/* 
+ * KTODO: This seems to be used only when handling unknown fields in structs.
+ * It's relatively slow, as we walk the bloomaps, but the actual use needs to
+ * be measured and compared to dumb implementation, possibly ->add(anything_id)
+ *
+ * We will take the set, and expand it into bitmap. In both use cases this is
+ * useful, as the resulting set will be walked anyway.
+ */
 static bitmap
-solution_set_expand (bitmap set, bitmap *expanded)
+solution_set_expand (Bloomap* set, bitmap* expanded)
 {
   bitmap_iterator bi;
   unsigned j;
@@ -1003,13 +1010,14 @@ solution_set_expand (bitmap set, bitmap *expanded)
 
   /* In a first pass expand to the head of the variables we need to
      add all sub-fields off.  This avoids quadratic behavior.  */
-  EXECUTE_IF_SET_IN_BITMAP (set, 0, j, bi)
+  BLOOMAP_FOR_EACH(j, set) 
+  //EXECUTE_IF_SET_IN_BITMAP (set, 0, j, bi)
     {
       varinfo_t v = get_varinfo (j);
       if (v->is_artificial_var
 	  || v->is_full_var)
 	continue;
-      bitmap_set_bit (*expanded, v->head);
+      bitmap_set_bit(*expanded, v->head);
     }
 
   /* In the second pass now expand all head variables with subfields.  */
@@ -1019,11 +1027,11 @@ solution_set_expand (bitmap set, bitmap *expanded)
       if (v->head != j)
 	continue;
       for (v = vi_next (v); v != NULL; v = vi_next (v))
-	bitmap_set_bit (*expanded, v->id);
+	bitmap_set_bit(*expanded, v->id);
     }
 
   /* And finally set the rest of the bits from SET.  */
-  bitmap_ior_into (*expanded, set);
+  bitmap_ior_into(*expanded, set);
 
   return *expanded;
 }
@@ -1033,7 +1041,7 @@ solution_set_expand (bitmap set, bitmap *expanded)
 
 /* KTODO:bloomap add bloomap variant */
 static bool
-set_union_with_increment  (Bloomap* to, bitmap delta, HOST_WIDE_INT inc,
+set_union_with_increment  (Bloomap* to, Bloomap* delta, HOST_WIDE_INT inc,
 			   bitmap *expanded_delta)
 {
   bool changed = false;
@@ -1042,7 +1050,7 @@ set_union_with_increment  (Bloomap* to, bitmap delta, HOST_WIDE_INT inc,
 
   /* If the solution of DELTA contains anything it is good enough to transfer
      this to TO.  */
-  if (bitmap_bit_p (delta, anything_id))
+  if (delta->contains(anything_id))
     return to->add(anything_id);
 
   /* If the offset is unknown we have to expand the solution to
@@ -1061,6 +1069,7 @@ set_union_with_increment  (Bloomap* to, bitmap delta, HOST_WIDE_INT inc,
       }
       return changed;
     }
+  /* KTODO: Shit. */
 
   /* For non-zero offset union the offsetted solution into the destination.  */
   EXECUTE_IF_SET_IN_BITMAP (delta, 0, i, bi)
@@ -1672,7 +1681,7 @@ topo_visit (constraint_graph_t graph, struct topo_info *ti,
 
 static void
 do_sd_constraint (constraint_graph_t graph, constraint_t c,
-		  bitmap delta, bitmap *expanded_delta)
+		  Bloomap* delta, bitmap *expanded_delta)
 {
   unsigned int lhs = c->lhs.var;
   bool flag = false;
@@ -1686,7 +1695,7 @@ do_sd_constraint (constraint_graph_t graph, constraint_t c,
 
   /* If the solution of Y contains anything it is good enough to transfer
      this to the LHS.  */
-  if (bitmap_bit_p (delta, anything_id))
+  if (delta->contains(anything_id))
     {
       flag |= sol->add( anything_id );
       goto done;
@@ -1697,14 +1706,15 @@ do_sd_constraint (constraint_graph_t graph, constraint_t c,
      dereferenced at all valid offsets.  */
   if (roffset == UNKNOWN_OFFSET)
     {
-      delta = solution_set_expand (delta, expanded_delta);
+      delta = solution_set_expand (delta, expanded_delta); /* FIXME: I think this is not important, but it might be.. check it */
       /* No further offset processing is necessary.  */
       roffset = 0;
     }
 
   /* For each variable j in delta (Sol(y)), add
      an edge in the graph from j to x, and union Sol(j) into Sol(x).  */
-  EXECUTE_IF_SET_IN_BITMAP (delta, 0, j, bi)
+  BLOOMAP_FOR_each(j, delta) 
+  //EXECUTE_IF_SET_IN_BITMAP (delta, 0, j, bi)
     {
       varinfo_t v = get_varinfo (j);
       HOST_WIDE_INT fieldoffset = v->offset + roffset;
@@ -1861,7 +1871,7 @@ do_ds_constraint (constraint_t c, bitmap delta, bitmap *expanded_delta)
    constraint (IE *x = &y, x = *y, *x = y, and x = y with offsets involved).  */
 
 static void
-do_complex_constraint (constraint_graph_t graph, constraint_t c, bitmap delta,
+do_complex_constraint (constraint_graph_t graph, constraint_t c, Bloomap* delta,
 		       bitmap *expanded_delta)
 {
   if (c->lhs.type == DEREF)
@@ -2734,7 +2744,8 @@ solve_graph (constraint_graph_t graph)
 {
   unsigned int size = graph->size;
   unsigned int i;
-  bitmap pts;
+  //bitmap pts;
+  Bloomap *pts = family->newMap();
 
   changed = BITMAP_ALLOC (NULL);
 
@@ -2749,7 +2760,8 @@ solve_graph (constraint_graph_t graph)
     }
 
   /* Allocate a bitmap to be used to store the changed bits.  */
-  pts = BITMAP_ALLOC (&pta_obstack);
+  //pts = BITMAP_ALLOC (&pta_obstack);
+  
 
   while (!bitmap_empty_p (changed))
     {
@@ -2793,6 +2805,9 @@ solve_graph (constraint_graph_t graph)
 	       * KTODO: Change 'pts' to bloomap.
 	       */
 
+	      //bitmap_clear(pts);
+	      pts->clear();
+
 	      /* Compute the changed set of solution bits.  If anything
 	         is in the solution just propagate that.  */
 	      if (vi->b_solution->contains(anything_id))
@@ -2803,15 +2818,16 @@ solve_graph (constraint_graph_t graph)
 		  if (vi->b_oldsolution
 		      && vi->b_oldsolution->contains(anything_id))
 		    continue;
-		  bloomap_copy_to_bitmap(pts, get_varinfo(find(anything_id))->b_solution);
+		  //bloomap_copy_to_bitmap(pts, get_varinfo(find(anything_id))->b_solution);
 		}
-	      else/* KTODO: try to do the difference */
+	      //else/* KTODO: try to do the difference */
 		 // if (vi->oldsolution)
 		//bitmap_and_compl (pts, vi->solution, vi->oldsolution);
 	      //else
-		bloomap_copy_to_bitmap (pts, vi->b_solution);
+		//bloomap_copy_to_bitmap (pts, vi->b_solution);
+	      pts->add(vi->b_solution); /* Check if we can't just pass the pointer... */
 
-	      if (bitmap_empty_p (pts))
+	      if (pts->isEmpty())
 		continue;
 
 	      /* Since we are not using the oldsolution, we don't need to create it */
@@ -2875,7 +2891,7 @@ solve_graph (constraint_graph_t graph)
 		      if (i == eff_escaped_id)
 			flag = tmp->add(escaped_id);
 		      else
-			flag = bloomap_ior_bitmap (tmp, pts);
+			flag = tmp->or_from(pts);
 
 		      if (flag)
 			bitmap_set_bit (changed, to);
@@ -2887,7 +2903,7 @@ solve_graph (constraint_graph_t graph)
       bitmap_obstack_release (&iteration_obstack);
     }
 
-  BITMAP_FREE (pts);
+  BLOOMAP_FREE (pts);
   BITMAP_FREE (changed);
   bitmap_obstack_release (&oldpta_obstack);
 }
