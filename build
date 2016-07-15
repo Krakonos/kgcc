@@ -54,7 +54,7 @@ if [ $PRETEND -eq 1 ]; then
 fi
 
 export CFLAGS="-fno-omit-frame-pointer -g"
-export CXXFLAGS="$CFLAGS"
+export CXXFLAGS="$CFLAGS -std=c++98 -Wno-c++11-compat"
 export LDFLAGS="$CFLAGS"
 export CXX="ccache g++"
 export CC="ccache gcc"
@@ -64,7 +64,8 @@ if [ $DO_REBUILD -eq 1 ]; then
 	echo "Doing full rebuild. The directory '$BDIR' will be removed in 5 seconds...."
 	sleep 5
 	rm -rf "$BDIR"
-	autoreconf -vfi
+	#autoreconf -vfi
+	#sleep 5
 fi
 
 if [ ! -d "$BDIR" ]; then
