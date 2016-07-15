@@ -1007,6 +1007,7 @@ solution_set_expand (Bloomap* set, bitmap* expanded)
     return *expanded;
 
   *expanded = BITMAP_ALLOC (&iteration_obstack);
+  bitmap tmp = BITMAP_ALLOC (&iteration_obstack);
 
   /* In a first pass expand to the head of the variables we need to
      add all sub-fields off.  This avoids quadratic behavior.  */
@@ -1014,6 +1015,7 @@ solution_set_expand (Bloomap* set, bitmap* expanded)
   //EXECUTE_IF_SET_IN_BITMAP (set, 0, j, bi)
     {
       varinfo_t v = get_varinfo (j);
+	  bitmap_set_bit(tmp, j);
       if (v->is_artificial_var
 	  || v->is_full_var)
 	continue;
@@ -1031,8 +1033,8 @@ solution_set_expand (Bloomap* set, bitmap* expanded)
     }
 
   /* And finally set the rest of the bits from SET.  */
-  bitmap_ior_into(*expanded, set);
-
+  bitmap_ior_into(*expanded, tmp);
+  BITMAP_FREE(tmp);
   return *expanded;
 }
 
@@ -1045,7 +1047,7 @@ set_union_with_increment  (Bloomap* to, Bloomap* delta, HOST_WIDE_INT inc,
 			   bitmap *expanded_delta)
 {
   bool changed = false;
-  bitmap_iterator bi;
+  //bitmap_iterator bi;
   unsigned int i;
 
   /* If the solution of DELTA contains anything it is good enough to transfer
@@ -1057,12 +1059,14 @@ set_union_with_increment  (Bloomap* to, Bloomap* delta, HOST_WIDE_INT inc,
      all subfields.  */
   if (inc == UNKNOWN_OFFSET)
     {
-      delta = solution_set_expand (delta, expanded_delta);
+      //delta = solution_set_expand (delta, expanded_delta);
+	  solution_set_expand(delta, expanded_delta);
 
       {
 	  bitmap_iterator dbi;
 	  unsigned int di;
-	  EXECUTE_IF_SET_IN_BITMAP(delta, 0, di, dbi) {
+	  EXECUTE_IF_SET_IN_BITMAP((*expanded_delta), 0, di, dbi) {
+	  //EXECUTE_IF_SET_IN_BITMAP(delta, 0, di, dbi) {
 	      /* KTODO: Perhaps add function to do this? */
 	  	changed |= to->add(di);
 	  }
@@ -1072,7 +1076,8 @@ set_union_with_increment  (Bloomap* to, Bloomap* delta, HOST_WIDE_INT inc,
   /* KTODO: Shit. */
 
   /* For non-zero offset union the offsetted solution into the destination.  */
-  EXECUTE_IF_SET_IN_BITMAP (delta, 0, i, bi)
+  BLOOMAP_FOR_EACH(i, delta) 
+ // EXECUTE_IF_SET_IN_BITMAP (delta, 0, i, bi)
     {
       varinfo_t vi = get_varinfo (i);
 
@@ -1704,17 +1709,22 @@ do_sd_constraint (constraint_graph_t graph, constraint_t c,
   /* If we do not know at with offset the rhs is dereferenced compute
      the reachability set of DELTA, conservatively assuming it is
      dereferenced at all valid offsets.  */
+  bitmap b_delta;
   if (roffset == UNKNOWN_OFFSET)
     {
-      delta = solution_set_expand (delta, expanded_delta); /* FIXME: I think this is not important, but it might be.. check it */
+      b_delta = solution_set_expand (delta, expanded_delta);
       /* No further offset processing is necessary.  */
       roffset = 0;
     }
+  else  {
+	  /* FIXME: It would be nice if this might be avoided. */
+	  b_delta = BITMAP_ALLOC( &iteration_obstack );
+	  bloomap_copy_to_bitmap(b_delta, delta);
+	}
 
   /* For each variable j in delta (Sol(y)), add
      an edge in the graph from j to x, and union Sol(j) into Sol(x).  */
-  BLOOMAP_FOR_each(j, delta) 
-  //EXECUTE_IF_SET_IN_BITMAP (delta, 0, j, bi)
+  EXECUTE_IF_SET_IN_BITMAP (b_delta, 0, j, bi)
     {
       varinfo_t v = get_varinfo (j);
       HOST_WIDE_INT fieldoffset = v->offset + roffset;
@@ -1758,6 +1768,9 @@ do_sd_constraint (constraint_graph_t graph, constraint_t c,
       while (v->offset < fieldoffset + size);
     }
 
+  if (roffset == UNKNOWN_OFFSET) {
+	  BITMAP_FREE(b_delta);
+  }
 done:
   /* If the LHS solution changed, mark the var as changed.  */
   if (flag)
@@ -1771,7 +1784,7 @@ done:
    as the starting solution for x.  */
 
 static void
-do_ds_constraint (constraint_t c, bitmap delta, bitmap *expanded_delta)
+do_ds_constraint (constraint_t c, Bloomap* delta, bitmap *expanded_delta)
 {
   unsigned int rhs = c->rhs.var;
   Bloomap *sol = get_varinfo(rhs)->b_solution;
@@ -1791,7 +1804,7 @@ do_ds_constraint (constraint_t c, bitmap delta, bitmap *expanded_delta)
   /* If the solution for x contains ANYTHING we have to merge the
      solution of y into all pointer variables which we do via
      STOREDANYTHING.  */
-  if (bitmap_bit_p (delta, anything_id))
+  if (delta->contains(anything_id))
     {
       unsigned t = find (storedanything_id);
       if (add_graph_edge (graph, t, rhs))
@@ -1805,15 +1818,20 @@ do_ds_constraint (constraint_t c, bitmap delta, bitmap *expanded_delta)
   /* If we do not know at with offset the rhs is dereferenced compute
      the reachability set of DELTA, conservatively assuming it is
      dereferenced at all valid offsets.  */
+  bitmap b_delta;
   if (loff == UNKNOWN_OFFSET)
     {
-      delta = solution_set_expand (delta, expanded_delta);
+      b_delta = solution_set_expand (delta, expanded_delta);
       loff = 0;
-    }
+    } else {
+	  /* FIXME: It would be nice if this might be avoided. */
+		b_delta = BITMAP_ALLOC( &iteration_obstack );
+		bloomap_copy_to_bitmap(b_delta, delta);
+	}
 
   /* For each member j of delta (Sol(x)), add an edge from y to j and
      union Sol(y) into Sol(j) */
-  EXECUTE_IF_SET_IN_BITMAP (delta, 0, j, bi)
+  EXECUTE_IF_SET_IN_BITMAP (b_delta, 0, j, bi)
     {
       varinfo_t v = get_varinfo (j);
       unsigned int t;
@@ -1865,6 +1883,9 @@ do_ds_constraint (constraint_t c, bitmap delta, bitmap *expanded_delta)
 	}
       while (v->offset < fieldoffset + size);
     }
+  if (loff == UNKNOWN_OFFSET) {
+	BITMAP_FREE( b_delta );
+  }
 }
 
 /* Handle a non-simple (simple meaning requires no iteration),
