@@ -255,7 +255,7 @@ static bitmap_obstack oldpta_obstack;
 /* Used for per-solver-iteration bitmaps.  */
 static bitmap_obstack iteration_obstack;
 
-BloomapFamily *family;
+BloomapFamily *family = NULL;
 
 #define BLOOMAP_FREE(map) do { delete map; map = NULL; } while (0);
 
@@ -6120,8 +6120,8 @@ set_uids_in_ptset (bitmap into, bitmap from, struct pt_solution *pt)
 	  || (escaped_vi->b_solution
 	      && escaped_vi->b_solution->contains(i)))
 	{
-	  pt->vars_contains_escaped = true;
-	  pt->vars_contains_escaped_heap = vi->is_heap_var;
+	  pt->ik_vars_contains_escaped = true;
+	  pt->ik_vars_contains_escaped_heap = vi->is_heap_var;
 	}
 
       if (TREE_CODE (vi->decl) == VAR_DECL
@@ -6138,11 +6138,21 @@ set_uids_in_ptset (bitmap into, bitmap from, struct pt_solution *pt)
 	     set contains global variables.  */
 	  bitmap_set_bit (into, DECL_PT_UID (vi->decl));
 	  if (vi->is_global_var)
-	    pt->vars_contains_nonlocal = true;
+	    pt->ik_vars_contains_nonlocal = true;
 	}
     }
 }
 
+/* Query statistics for points-to solutions.  */
+
+static struct {
+  unsigned HOST_WIDE_INT ik_pt_solution_includes_may_alias;
+  unsigned HOST_WIDE_INT ik_pt_solution_includes_no_alias;
+  unsigned HOST_WIDE_INT ik_pt_solutions_intersect_may_alias;
+  unsigned HOST_WIDE_INT ik_pt_solutions_intersect_no_alias;
+  unsigned HOST_WIDE_INT ik_pt_solution_aliases_anything;
+  unsigned HOST_WIDE_INT ik_pt_solution_aliases_nontriv;
+} pta_stats;
 
 /* Compute the points-to solution *PT for the variable VI.  */
 
@@ -6169,33 +6179,31 @@ ik_find_what_var_points_to (varinfo_t orig_vi)
   /* Translate artificial variables into SSA_NAME_PTR_INFO
      attributes.  */
   if (vi->b_solution->contains(nothing_id)) {
-      pt->null = 1;
+      pt->ik_null = 1;
   }
   if (vi->b_solution->contains(escaped_id)) {
-      pt->ipa_escaped = 1;
+      pt->ik_ipa_escaped = 1;
       /* Expand some special vars of ESCAPED in-place here.  */
       varinfo_t evi = get_varinfo (find (escaped_id));
       if (evi->b_solution->contains(nonlocal_id))
-	  pt->nonlocal = 1;
+	  pt->ik_nonlocal = 1;
   }
   if (vi->b_solution->contains(nonlocal_id)) {
-      pt->nonlocal = 1;
+      pt->ik_nonlocal = 1;
   }
   if (vi->b_solution->contains(anything_id) || vi->b_solution->contains(integer_id)) {
-	pt->anything = 1;
+	pt->ik_anything = 1;
   }
 
   /* Instead of doing extra work, simply do not create
      elaborate points-to information for pt_anything pointers.  */
-  static unsigned aai = 0;
-  static unsigned tai = 0;
-  if (pt->anything) {
+  if (pt->ik_anything) {
   	pt->varid = vi->id;
-	fprintf(stderr, "(IK)  Anything alias info %i (true %i).\n", aai++, tai);
+	pta_stats.ik_pt_solution_aliases_anything++;
     return *pt;
   }
 
-  fprintf(stderr, "(IK) True alias info %i (anything %i).\n", tai++, aai);
+  pta_stats.ik_pt_solution_aliases_nontriv++;
   pt->b_vars = vi->b_solution;
 
   /* Share the final set of variables when possible.  */
@@ -6248,19 +6256,10 @@ ik_find_what_p_points_to (tree p)
 }
 
 
-/* Query statistics for points-to solutions.  */
-
-static struct {
-  unsigned HOST_WIDE_INT ik_pt_solution_includes_may_alias;
-  unsigned HOST_WIDE_INT ik_pt_solution_includes_no_alias;
-  unsigned HOST_WIDE_INT ik_pt_solutions_intersect_may_alias;
-  unsigned HOST_WIDE_INT ik_pt_solutions_intersect_no_alias;
-} pta_stats;
-
 void
 ik_dump_pta_stats (FILE *s)
 {
-  fprintf (s, "\nPTA query stats:\n");
+  fprintf (s, "\nIK PTA query stats:\n");
   fprintf (s, "  ik_pt_solution_includes: "
 	   HOST_WIDE_INT_PRINT_DEC" disambiguations, "
 	   HOST_WIDE_INT_PRINT_DEC" queries\n",
@@ -6273,6 +6272,11 @@ ik_dump_pta_stats (FILE *s)
 	   pta_stats.ik_pt_solutions_intersect_no_alias,
 	   pta_stats.ik_pt_solutions_intersect_no_alias
 	   + pta_stats.ik_pt_solutions_intersect_may_alias);
+  fprintf (s, "IK Set statistics:\n" 
+	  HOST_WIDE_INT_PRINT_DEC " point to anything, " 
+	  HOST_WIDE_INT_PRINT_DEC " point to non-trivial.\n",
+	  pta_stats.ik_pt_solution_aliases_anything,
+	  pta_stats.ik_pt_solution_aliases_nontriv);
 }
 
 
@@ -6283,7 +6287,7 @@ void
 ik_pt_solution_reset (struct pt_solution *pt)
 {
   memset (pt, 0, sizeof (struct pt_solution));
-  pt->anything = true;
+  pt->ik_anything = true;
 }
 
 /* Set the points-to solution *PT to point only to the variables
@@ -6295,13 +6299,23 @@ void
 ik_pt_solution_set (struct pt_solution *pt, bitmap vars,
 		 bool vars_contains_nonlocal)
 {
-  /* KTODO:add_bloomap, or delete, as it seems unused */
-  memset (pt, 0, sizeof (struct pt_solution));
-  pt->vars = vars;
-  pt->vars_contains_nonlocal = vars_contains_nonlocal;
-  pt->vars_contains_escaped
-    = (cfun->gimple_df->escaped.anything
-       || bitmap_intersect_p (cfun->gimple_df->escaped.vars, vars));
+  /* When a family is not initialized, there is no work for us. */
+  if (!family) return;
+
+  if (pt->b_vars)  {
+      pt->b_vars->clear();
+      bloomap_ior_bitmap(pt->b_vars, vars);
+
+      pt->ik_vars_contains_nonlocal = vars_contains_nonlocal;
+      if (cfun->gimple_df->escaped.b_vars) {
+	  pt->ik_vars_contains_escaped
+	      = (cfun->gimple_df->escaped.ik_anything
+		      || cfun->gimple_df->escaped.b_vars->isIntersectionEmpty(pt->b_vars));
+      } else {
+	  pt->ik_vars_contains_escaped = true;
+      }
+  } else 
+      pt->ik_anything = true;
 }
 
 /* Set the points-to solution *PT to point only to the variable VAR.  */
@@ -6309,14 +6323,20 @@ ik_pt_solution_set (struct pt_solution *pt, bitmap vars,
 void
 ik_pt_solution_set_var (struct pt_solution *pt, tree var)
 {
-  /* KTODO:add_bloomap, or delete, as it seems unused */
-  memset (pt, 0, sizeof (struct pt_solution));
-  pt->vars = BITMAP_GGC_ALLOC ();
-  bitmap_set_bit (pt->vars, DECL_PT_UID (var));
-  pt->vars_contains_nonlocal = is_global_var (var);
-  pt->vars_contains_escaped
-    = (cfun->gimple_df->escaped.anything
-       || bitmap_bit_p (cfun->gimple_df->escaped.vars, DECL_PT_UID (var)));
+  /* When a family is not initialized, there is no work for us. */
+  if (!family) return;
+
+  /* KTODO:check correctness*/
+  pt->b_vars = family->newMap();
+  pt->b_vars->add(DECL_PT_UID (var));
+  pt->ik_vars_contains_nonlocal = is_global_var (var);
+  if (cfun->gimple_df->escaped.b_vars) {
+      pt->ik_vars_contains_escaped
+	  = (cfun->gimple_df->escaped.ik_anything
+		  || cfun->gimple_df->escaped.b_vars->contains(DECL_PT_UID (var)));
+  } else {
+      pt->ik_vars_contains_escaped = true;
+  }
 }
 
 /* Computes the union of the points-to solutions *DEST and *SRC and
@@ -6329,26 +6349,26 @@ static void
 ik_pt_solution_ior_into (struct pt_solution *dest, struct pt_solution *src)
 {
   /* KTODO:add_bloomap */
-  dest->anything |= src->anything;
-  if (dest->anything)
+  dest->ik_anything |= src->ik_anything;
+  if (dest->ik_anything)
     {
       ik_pt_solution_reset (dest);
       return;
     }
 
-  dest->nonlocal |= src->nonlocal;
-  dest->escaped |= src->escaped;
-  dest->ipa_escaped |= src->ipa_escaped;
-  dest->null |= src->null;
-  dest->vars_contains_nonlocal |= src->vars_contains_nonlocal;
-  dest->vars_contains_escaped |= src->vars_contains_escaped;
-  dest->vars_contains_escaped_heap |= src->vars_contains_escaped_heap;
-  if (!src->vars)
+  dest->ik_nonlocal |= src->ik_nonlocal;
+  dest->ik_escaped |= src->ik_escaped;
+  dest->ik_ipa_escaped |= src->ik_ipa_escaped;
+  dest->ik_null |= src->ik_null;
+  dest->ik_vars_contains_nonlocal |= src->ik_vars_contains_nonlocal;
+  dest->ik_vars_contains_escaped |= src->ik_vars_contains_escaped;
+  dest->ik_vars_contains_escaped_heap |= src->ik_vars_contains_escaped_heap;
+  if (!src->b_vars)
     return;
 
-  if (!dest->vars)
-    dest->vars = BITMAP_GGC_ALLOC ();
-  bitmap_ior_into (dest->vars, src->vars);
+  if (!dest->b_vars)
+    dest->b_vars = family->newMap();
+  dest->b_vars->or_from(src->b_vars);
 }
 
 /* Return true if the points-to solution *PT is empty.  */
@@ -6368,18 +6388,13 @@ unsigned long ik_pt_solution_size(struct pt_solution *pt) {
 bool
 ik_pt_solution_empty_p (struct pt_solution *pt)
 {
-return false;
-  /* KTODO:add_bloomap */
   bool ret = true;
-  if (pt->anything || pt->nonlocal)
+  if (pt->ik_anything || pt->ik_nonlocal)
 	  ret = false;
-  else if (pt->vars && !bitmap_empty_p (pt->vars))
-	  ret = false;
-  /* If the solution includes ESCAPED, check if that is empty.  */
-  else if (pt->escaped && !ik_pt_solution_empty_p (&cfun->gimple_df->escaped))
+  else if (pt->b_vars && !pt->b_vars->isEmpty())
 	  ret = false;
   /* If the solution includes ESCAPED, check if that is empty.  */
-  else if (pt->ipa_escaped && !ik_pt_solution_empty_p (&ik_ipa_escaped_pt))
+  else if (pt->ik_ipa_escaped && !ik_pt_solution_empty_p (&ik_ipa_escaped_pt))
 	  ret = false;
 
   if (glob_ipa_dump) {
@@ -6395,21 +6410,26 @@ return false;
 bool
 ik_pt_solution_singleton_p (struct pt_solution *pt, unsigned *uid)
 {
+  /* KTODO:add_bloomap
+   * We could do it by walking the entire bloomap, or perhaps check for single
+   * bit in side index and then walk it, but it's probably not worth it. Let's
+   * just log this event and return false conservatively.*/
+  if (glob_ipa_dump) {
+    fprintf(glob_ipa_dump, "query_ik_pt_solution_singleton_p;%u;NA;%s;%lu;NA\n", ik_pt_solution_to_vi_id(pt), "false", ik_pt_solution_size(pt));
+  }
 return false;
-  /* KTODO:add_bloomap */
+#if 0
 	bool ret = true;
-  if (pt->anything || pt->nonlocal || pt->escaped || pt->ipa_escaped
-      || pt->null || pt->vars == NULL
+  if (pt->ik_anything || pt->ik_nonlocal || pt->ik_escaped || pt->ik_ipa_escaped
+      || pt->ik_null || pt->b_vars == NULL
       || !bitmap_single_bit_set_p (pt->vars))
     ret = false;
 
-  if (glob_ipa_dump) {
-    fprintf(glob_ipa_dump, "query_ik_pt_solution_singleton_p;%u;NA;%s;%lu;NA\n", ik_pt_solution_to_vi_id(pt), ret ? "true" : "false", ik_pt_solution_size(pt));
-  }
 
   if (ret)
   	*uid = bitmap_first_set_bit (pt->vars);
   return ret;
+#endif
 }
 
 /* Return true if the points-to solution *PT includes global memory.  */
@@ -6417,28 +6437,25 @@ return false;
 bool
 ik_pt_solution_includes_global (struct pt_solution *pt)
 {
-return true;
-  /* KTODO:add_bloomap */
+  /* KTODO: As it's not correct in IPA pass, maybe we could improve that.
+   * However, isn't it already handled by the ipa-reference pass? */
   bool ret = false;
-  if (pt->anything
-      || pt->nonlocal
-      || pt->vars_contains_nonlocal
+  if (pt->ik_anything
+      || pt->ik_nonlocal
+      || pt->ik_vars_contains_nonlocal
       /* The following is a hack to make the malloc escape hack work.
          In reality we'd need different sets for escaped-through-return
 	 and escaped-to-callees and passes would need to be updated.  */
-      || pt->vars_contains_escaped_heap)
+      || pt->ik_vars_contains_escaped_heap)
 	  ret = true;
   /* 'escaped' is also a placeholder so we have to look into it.  */
-  else if (pt->escaped)
-    ret = ik_pt_solution_includes_global (&cfun->gimple_df->escaped);
-  else if (pt->ipa_escaped)
+  else if (pt->ik_ipa_escaped)
     ret = ik_pt_solution_includes_global (&ik_ipa_escaped_pt);
 
   /* ???  This predicate is not correct for the IPA-PTA solution
      as we do not properly distinguish between unit escape points
      and global variables.  */
-  else if (cfun->gimple_df->ipa_kpta)
-    ret = true;
+  ret = true;
 
   if (glob_ipa_dump) {
     fprintf(glob_ipa_dump, "query_ik_pt_solution_includes_global;%u;NA;%s;%lu;NA\n", ik_pt_solution_to_vi_id(pt), ret ? "true" : "false", ik_pt_solution_size(pt));
@@ -6453,26 +6470,23 @@ return true;
 static bool
 ik_pt_solution_includes_1 (struct pt_solution *pt, const_tree decl)
 {
-return true;
-  /* KTODO:add_bloomap */
-  if (pt->anything)
+  if (pt->ik_anything)
     return true;
 
-  if (pt->nonlocal
+  if (pt->ik_nonlocal
       && is_global_var (decl))
     return true;
 
-  if (pt->vars
-      && bitmap_bit_p (pt->vars, DECL_PT_UID (decl)))
+  /* If we don't have analysis data, answer conservatively. */
+  if (!pt->b_vars)
+      return true;
+
+  if (pt->b_vars
+      && pt->b_vars->contains(DECL_PT_UID (decl)))
     return true;
 
   /* If the solution includes ESCAPED, check it.  */
-  if (pt->escaped
-      && ik_pt_solution_includes_1 (&cfun->gimple_df->escaped, decl))
-    return true;
-
-  /* If the solution includes ESCAPED, check it.  */
-  if (pt->ipa_escaped
+  if (pt->ik_ipa_escaped
       && ik_pt_solution_includes_1 (&ik_ipa_escaped_pt, decl))
     return true;
 
@@ -6482,8 +6496,6 @@ return true;
 bool
 ik_pt_solution_includes (struct pt_solution *pt, const_tree decl)
 {
-return true;
-  /* KTODO:add_bloomap */
   bool res = ik_pt_solution_includes_1 (pt, decl);
   if (res)
     ++pta_stats.ik_pt_solution_includes_may_alias;
@@ -6503,52 +6515,51 @@ return true;
 static bool
 ik_pt_solutions_intersect_1 (struct pt_solution *pt1, struct pt_solution *pt2)
 {
-return true;
-  /* KTODO:add_bloomap */
-  if (pt1->anything || pt2->anything)
+  /* If one points to anything, there's nothing to do. */
+  if (pt1->ik_anything || pt2->ik_anything)
     return true;
 
   /* If either points to unknown global memory and the other points to
      any global memory they alias.  */
-  if ((pt1->nonlocal
-       && (pt2->nonlocal
-	   || pt2->vars_contains_nonlocal))
-      || (pt2->nonlocal
-	  && pt1->vars_contains_nonlocal))
+  if ((pt1->ik_nonlocal
+       && (pt2->ik_nonlocal
+	   || pt2->ik_vars_contains_nonlocal))
+      || (pt2->ik_nonlocal
+	  && pt1->ik_vars_contains_nonlocal))
     return true;
 
   /* If either points to all escaped memory and the other points to
      any escaped memory they alias.  */
-  if ((pt1->escaped
-       && (pt2->escaped
-	   || pt2->vars_contains_escaped))
-      || (pt2->escaped
-	  && pt1->vars_contains_escaped))
+  if ((pt1->ik_escaped
+       && (pt2->ik_escaped
+	   || pt2->ik_vars_contains_escaped))
+      || (pt2->ik_escaped
+	  && pt1->ik_vars_contains_escaped))
     return true;
 
   /* Check the escaped solution if required.
      ???  Do we need to check the local against the IPA escaped sets?  */
-  if ((pt1->ipa_escaped || pt2->ipa_escaped)
+  if ((pt1->ik_ipa_escaped || pt2->ik_ipa_escaped)
       && !ik_pt_solution_empty_p (&ik_ipa_escaped_pt))
     {
       /* If both point to escaped memory and that solution
 	 is not empty they alias.  */
-      if (pt1->ipa_escaped && pt2->ipa_escaped)
+      if (pt1->ik_ipa_escaped && pt2->ik_ipa_escaped)
 	return true;
 
       /* If either points to escaped memory see if the escaped solution
 	 intersects with the other.  */
-      if ((pt1->ipa_escaped
+      if ((pt1->ik_ipa_escaped
 	   && ik_pt_solutions_intersect_1 (&ik_ipa_escaped_pt, pt2))
-	  || (pt2->ipa_escaped
+	  || (pt2->ik_ipa_escaped
 	      && ik_pt_solutions_intersect_1 (&ik_ipa_escaped_pt, pt1)))
 	return true;
     }
 
   /* Now both pointers alias if their points-to solution intersects.  */
-  return (pt1->vars
-	  && pt2->vars
-	  && bitmap_intersect_p (pt1->vars, pt2->vars));
+  return (pt1->b_vars
+	  && pt2->b_vars
+	  && pt1->b_vars->isIntersectionEmpty(pt2->b_vars));
 }
 
 bool
@@ -6916,7 +6927,7 @@ solve_constraints (void)
 
 /* IPA PTA solutions for ESCAPED.  */
 struct pt_solution ik_ipa_escaped_pt
-  = { true, false, false, false, false, false, false, false, NULL, NULL, 0 };
+  = { true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, NULL, NULL, 0 };
 
 /* Associate node with varinfo DATA. Worker for
    cgraph_for_node_and_aliases.  */
@@ -7158,15 +7169,15 @@ ipa_kpta_execute (void)
 			 implicitly used by calls.  */
 		      /* ???  ESCAPED can be empty even though NONLOCAL
 			 always escaped.  */
-		      pt->nonlocal = 1;
-		      pt->ipa_escaped = 1;
+		      pt->ik_nonlocal = 1;
+		      pt->ik_ipa_escaped = 1;
 		    }
 		  else
 		    {
 		      /* If there is nothing special about this call then
 			 we have made everything that is used also escape.  */
 		      *pt = ik_ipa_escaped_pt;
-		      pt->nonlocal = 1;
+		      pt->ik_nonlocal = 1;
 		    }
 
 		  pt = gimple_call_clobber_set (stmt);
@@ -7179,15 +7190,15 @@ ipa_kpta_execute (void)
 			 implicitly clobbered by calls.  */
 		      /* ???  ESCAPED can be empty even though NONLOCAL
 			 always escaped.  */
-		      pt->nonlocal = 1;
-		      pt->ipa_escaped = 1;
+		      pt->ik_nonlocal = 1;
+		      pt->ik_ipa_escaped = 1;
 		    }
 		  else
 		    {
 		      /* If there is nothing special about this call then
 			 we have made everything that is used also escape.  */
 		      *pt = ik_ipa_escaped_pt;
-		      pt->nonlocal = 1;
+		      pt->ik_nonlocal = 1;
 		    }
 		}
 	      /* Handle indirect calls.  */
@@ -7208,8 +7219,8 @@ ipa_kpta_execute (void)
 		    }
 		  else
 		    {
-		      bitmap_iterator bi;
-		      unsigned i;
+		      //bitmap_iterator bi;
+		      //unsigned i;
 		      struct pt_solution *uses, *clobbers;
 
 		      uses = gimple_call_use_set (stmt);
@@ -7217,10 +7228,10 @@ ipa_kpta_execute (void)
 		      memset (uses, 0, sizeof (struct pt_solution));
 		      memset (clobbers, 0, sizeof (struct pt_solution));
 		      /* KTODO: Do something smart here, perhaps the bloomap walk is acceptable? */
-		      uses->nonlocal = 1;
-		      uses->ipa_escaped = 1;
-		      clobbers->nonlocal = 1;
-		      clobbers->ipa_escaped = 1;
+		      uses->ik_nonlocal = 1;
+		      uses->ik_ipa_escaped = 1;
+		      clobbers->ik_nonlocal = 1;
+		      clobbers->ik_ipa_escaped = 1;
 #if 0 
 		      EXECUTE_IF_SET_IN_BITMAP (fi->solution, 0, i, bi)
 			{
@@ -7230,20 +7241,20 @@ ipa_kpta_execute (void)
 			  if (!vi->is_fn_info)
 			    {
 			      /* ???  We could be more precise here?  */
-			      uses->nonlocal = 1;
-			      uses->ipa_escaped = 1;
-			      clobbers->nonlocal = 1;
-			      clobbers->ipa_escaped = 1;
+			      uses->ik_nonlocal = 1;
+			      uses->ik_ipa_escaped = 1;
+			      clobbers->ik_nonlocal = 1;
+			      clobbers->ik_ipa_escaped = 1;
 			      continue;
 			    }
 
-			  if (!uses->anything)
+			  if (!uses->ik_anything)
 			    {
 			      sol = ik_find_what_var_points_to
 				      (first_vi_for_offset (vi, fi_uses));
 			      ik_pt_solution_ior_into (uses, &sol);
 			    }
-			  if (!clobbers->anything)
+			  if (!clobbers->ik_anything)
 			    {
 			      sol = ik_find_what_var_points_to
 				      (first_vi_for_offset (vi, fi_clobbers));
@@ -7260,6 +7271,7 @@ ipa_kpta_execute (void)
     }
 
   fprintf(stderr, "ik-structalias finished.\n");
+  ik_dump_pta_stats(stderr);
 
   //delete_points_to_sets (); // KTODO: WTF?
 

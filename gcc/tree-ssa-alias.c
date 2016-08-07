@@ -2871,16 +2871,21 @@ bool pt_solutions_intersect (struct pt_solution *sol1, struct pt_solution *sol2)
 }
 
 void pt_solution_reset (struct pt_solution *sol) {
-    std_pt_solution_reset(sol);
-    ik_pt_solution_reset(sol);
+    memset (sol, 0, sizeof (struct pt_solution));
+    sol->anything = true;
+    sol->ik_anything = true;
+    //std_pt_solution_reset(sol);
+    //ik_pt_solution_reset(sol);
 }
 
 void pt_solution_set (struct pt_solution *sol, bitmap vars, bool vars_contains_nonlocal) {
+    memset (sol, 0, sizeof (struct pt_solution));
     std_pt_solution_set(sol, vars, vars_contains_nonlocal);
     ik_pt_solution_set(sol, vars, vars_contains_nonlocal);
 }
 
 void pt_solution_set_var (struct pt_solution *sol, tree var) {
+    memset (sol, 0, sizeof (struct pt_solution));
     std_pt_solution_set_var(sol, var);
     ik_pt_solution_set_var(sol, var);
 }

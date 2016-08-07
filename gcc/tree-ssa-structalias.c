@@ -6086,6 +6086,16 @@ set_uids_in_ptset (bitmap into, bitmap from, struct pt_solution *pt)
     }
 }
 
+/* Query statistics for points-to solutions.  */
+
+static struct {
+  unsigned HOST_WIDE_INT std_pt_solution_includes_may_alias;
+  unsigned HOST_WIDE_INT std_pt_solution_includes_no_alias;
+  unsigned HOST_WIDE_INT std_pt_solutions_intersect_may_alias;
+  unsigned HOST_WIDE_INT std_pt_solutions_intersect_no_alias;
+  unsigned HOST_WIDE_INT std_pt_solution_aliases_anything;
+  unsigned HOST_WIDE_INT std_pt_solution_aliases_nontriv;
+} pta_stats;
 
 /* Compute the points-to solution *PT for the variable VI.  */
 
@@ -6148,15 +6158,14 @@ find_what_var_points_to (varinfo_t orig_vi)
 
   /* Instead of doing extra work, simply do not create
      elaborate points-to information for pt_anything pointers.  */
-  static unsigned aai = 0;
-  static unsigned tai = 0;
   if (pt->anything) {
   	pt->varid = vi->id;
-	fprintf(stderr, "(STD) Anything alias info %i (true %i).\n", aai++, tai);
+	pta_stats.std_pt_solution_aliases_anything++;
     return *pt;
   }
 
-  fprintf(stderr, "(STD) True alias info %i (anything %i).\n", tai++, aai);
+  pta_stats.std_pt_solution_aliases_nontriv++;
+
 
   /* Share the final set of variables when possible.  */
   finished_solution = BITMAP_GGC_ALLOC ();
@@ -6204,16 +6213,6 @@ find_what_p_points_to (tree p)
   pi->pt = find_what_var_points_to (vi);
 }
 
-
-/* Query statistics for points-to solutions.  */
-
-static struct {
-  unsigned HOST_WIDE_INT std_pt_solution_includes_may_alias;
-  unsigned HOST_WIDE_INT std_pt_solution_includes_no_alias;
-  unsigned HOST_WIDE_INT std_pt_solutions_intersect_may_alias;
-  unsigned HOST_WIDE_INT std_pt_solutions_intersect_no_alias;
-} pta_stats;
-
 void
 dump_pta_stats (FILE *s)
 {
@@ -6230,6 +6229,11 @@ dump_pta_stats (FILE *s)
 	   pta_stats.std_pt_solutions_intersect_no_alias,
 	   pta_stats.std_pt_solutions_intersect_no_alias
 	   + pta_stats.std_pt_solutions_intersect_may_alias);
+  fprintf (s, "Set statistics:\n" 
+	  HOST_WIDE_INT_PRINT_DEC " point to anything, " 
+	  HOST_WIDE_INT_PRINT_DEC " point to non-trivial.\n",
+	  pta_stats.std_pt_solution_aliases_anything,
+	  pta_stats.std_pt_solution_aliases_nontriv);
 }
 
 
@@ -6252,7 +6256,6 @@ void
 std_pt_solution_set (struct pt_solution *pt, bitmap vars,
 		 bool vars_contains_nonlocal)
 {
-  memset (pt, 0, sizeof (struct pt_solution));
   pt->vars = vars;
   pt->vars_contains_nonlocal = vars_contains_nonlocal;
   pt->vars_contains_escaped
@@ -6265,7 +6268,6 @@ std_pt_solution_set (struct pt_solution *pt, bitmap vars,
 void
 std_pt_solution_set_var (struct pt_solution *pt, tree var)
 {
-  memset (pt, 0, sizeof (struct pt_solution));
   pt->vars = BITMAP_GGC_ALLOC ();
   bitmap_set_bit (pt->vars, DECL_PT_UID (var));
   pt->vars_contains_nonlocal = is_global_var (var);
@@ -7320,7 +7322,7 @@ make_pass_build_ealias (gcc::context *ctxt)
 
 /* IPA PTA solutions for ESCAPED.  */
 struct pt_solution ipa_escaped_pt
-  = { true, false, false, false, false, false, false, false, NULL, NULL, 0 };
+  = { true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, NULL, NULL, 0 };
 
 /* Associate node with varinfo DATA. Worker for
    cgraph_for_node_and_aliases.  */
@@ -7652,6 +7654,7 @@ ipa_pta_execute (void)
       fn->gimple_df->ipa_pta = true;
     }
 
+  dump_pta_stats(stderr);
   //delete_points_to_sets (); // KTODO: WTF?
 
   in_ipa_mode = 0;

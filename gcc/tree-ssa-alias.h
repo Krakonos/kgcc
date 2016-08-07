@@ -32,31 +32,39 @@ struct GTY(()) pt_solution
   /* Nonzero if points-to analysis couldn't determine where this pointer
      is pointing to.  */
   unsigned int anything : 1;
+  unsigned int ik_anything : 1;
 
   /* Nonzero if the points-to set includes any global memory.  Note that
      even if this is zero pt_vars can still include global variables.  */
   unsigned int nonlocal : 1;
+  unsigned int ik_nonlocal : 1;
 
   /* Nonzero if the points-to set includes the local escaped solution by
      reference.  */
   unsigned int escaped : 1;
+  unsigned int ik_escaped : 1;
 
   /* Nonzero if the points-to set includes the IPA escaped solution by
      reference.  */
   unsigned int ipa_escaped : 1;
+  unsigned int ik_ipa_escaped : 1;
 
   /* Nonzero if the points-to set includes 'nothing', the points-to set
      includes memory at address NULL.  */
   unsigned int null : 1;
+  unsigned int ik_null : 1;
 
 
   /* Nonzero if the vars bitmap includes a variable included in 'nonlocal'.  */
   unsigned int vars_contains_nonlocal : 1;
+  unsigned int ik_vars_contains_nonlocal : 1;
   /* Nonzero if the vars bitmap includes a variable included in 'escaped'.  */
   unsigned int vars_contains_escaped : 1;
+  unsigned int ik_vars_contains_escaped : 1;
   /* Nonzero if the vars bitmap includes a anonymous heap variable that
      escaped the function and thus became global.  */
   unsigned int vars_contains_escaped_heap : 1;
+  unsigned int ik_vars_contains_escaped_heap : 1;
 
   /* Set of variables that this pointer may point to.  */
   bitmap vars; /* KTODO: cfgexpand.c needs to be updated to use b_vars, though it's probably correct if vars = NULL */
