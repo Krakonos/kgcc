@@ -21,7 +21,7 @@
 #ifndef TREE_SSA_ALIAS_H
 #define TREE_SSA_ALIAS_H
 
-class GTY(()) Bloomap;
+class Bloomap;
 
 /* The points-to solution.
 
@@ -60,7 +60,7 @@ struct GTY(()) pt_solution
 
   /* Set of variables that this pointer may point to.  */
   bitmap vars; /* KTODO: cfgexpand.c needs to be updated to use b_vars, though it's probably correct if vars = NULL */
-  Bloomap *b_vars;
+  Bloomap* GTY((skip)) b_vars;
 
   /* representative varid */
   unsigned varid;
@@ -148,6 +148,26 @@ extern void dump_alias_stats (FILE *);
 
 /* In tree-ssa-structalias.c  */
 extern unsigned int compute_may_aliases (void);
+extern bool std_pt_solution_empty_p (struct pt_solution *);
+extern bool std_pt_solution_singleton_p (struct pt_solution *, unsigned *);
+extern bool std_pt_solution_includes_global (struct pt_solution *);
+extern bool std_pt_solution_includes (struct pt_solution *, const_tree);
+extern bool std_pt_solutions_intersect (struct pt_solution *, struct pt_solution *);
+extern void std_pt_solution_reset (struct pt_solution *);
+extern void std_pt_solution_set (struct pt_solution *, bitmap, bool);
+extern void std_pt_solution_set_var (struct pt_solution *, tree);
+
+/* In ik-structalias.c */
+extern bool ik_pt_solution_empty_p (struct pt_solution *);
+extern bool ik_pt_solution_singleton_p (struct pt_solution *, unsigned *);
+extern bool ik_pt_solution_includes_global (struct pt_solution *);
+extern bool ik_pt_solution_includes (struct pt_solution *, const_tree);
+extern bool ik_pt_solutions_intersect (struct pt_solution *, struct pt_solution *);
+extern void ik_pt_solution_reset (struct pt_solution *);
+extern void ik_pt_solution_set (struct pt_solution *, bitmap, bool);
+extern void ik_pt_solution_set_var (struct pt_solution *, tree);
+
+/* In tree-ssa-alias.c ; these query the two above. */
 extern bool pt_solution_empty_p (struct pt_solution *);
 extern bool pt_solution_singleton_p (struct pt_solution *, unsigned *);
 extern bool pt_solution_includes_global (struct pt_solution *);

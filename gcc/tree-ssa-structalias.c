@@ -6148,10 +6148,15 @@ find_what_var_points_to (varinfo_t orig_vi)
 
   /* Instead of doing extra work, simply do not create
      elaborate points-to information for pt_anything pointers.  */
+  static unsigned aai = 0;
+  static unsigned tai = 0;
   if (pt->anything) {
   	pt->varid = vi->id;
+	fprintf(stderr, "(STD) Anything alias info %i (true %i).\n", aai++, tai);
     return *pt;
   }
+
+  fprintf(stderr, "(STD) True alias info %i (anything %i).\n", tai++, aai);
 
   /* Share the final set of variables when possible.  */
   finished_solution = BITMAP_GGC_ALLOC ();
@@ -6203,28 +6208,28 @@ find_what_p_points_to (tree p)
 /* Query statistics for points-to solutions.  */
 
 static struct {
-  unsigned HOST_WIDE_INT pt_solution_includes_may_alias;
-  unsigned HOST_WIDE_INT pt_solution_includes_no_alias;
-  unsigned HOST_WIDE_INT pt_solutions_intersect_may_alias;
-  unsigned HOST_WIDE_INT pt_solutions_intersect_no_alias;
+  unsigned HOST_WIDE_INT std_pt_solution_includes_may_alias;
+  unsigned HOST_WIDE_INT std_pt_solution_includes_no_alias;
+  unsigned HOST_WIDE_INT std_pt_solutions_intersect_may_alias;
+  unsigned HOST_WIDE_INT std_pt_solutions_intersect_no_alias;
 } pta_stats;
 
 void
 dump_pta_stats (FILE *s)
 {
   fprintf (s, "\nPTA query stats:\n");
-  fprintf (s, "  pt_solution_includes: "
+  fprintf (s, "  std_pt_solution_includes: "
 	   HOST_WIDE_INT_PRINT_DEC" disambiguations, "
 	   HOST_WIDE_INT_PRINT_DEC" queries\n",
-	   pta_stats.pt_solution_includes_no_alias,
-	   pta_stats.pt_solution_includes_no_alias
-	   + pta_stats.pt_solution_includes_may_alias);
-  fprintf (s, "  pt_solutions_intersect: "
+	   pta_stats.std_pt_solution_includes_no_alias,
+	   pta_stats.std_pt_solution_includes_no_alias
+	   + pta_stats.std_pt_solution_includes_may_alias);
+  fprintf (s, "  std_pt_solutions_intersect: "
 	   HOST_WIDE_INT_PRINT_DEC" disambiguations, "
 	   HOST_WIDE_INT_PRINT_DEC" queries\n",
-	   pta_stats.pt_solutions_intersect_no_alias,
-	   pta_stats.pt_solutions_intersect_no_alias
-	   + pta_stats.pt_solutions_intersect_may_alias);
+	   pta_stats.std_pt_solutions_intersect_no_alias,
+	   pta_stats.std_pt_solutions_intersect_no_alias
+	   + pta_stats.std_pt_solutions_intersect_may_alias);
 }
 
 
@@ -6232,7 +6237,7 @@ dump_pta_stats (FILE *s)
    (point to anything).  */
 
 void
-pt_solution_reset (struct pt_solution *pt)
+std_pt_solution_reset (struct pt_solution *pt)
 {
   memset (pt, 0, sizeof (struct pt_solution));
   pt->anything = true;
@@ -6244,7 +6249,7 @@ pt_solution_reset (struct pt_solution *pt)
    it contains restrict tag variables.  */
 
 void
-pt_solution_set (struct pt_solution *pt, bitmap vars,
+std_pt_solution_set (struct pt_solution *pt, bitmap vars,
 		 bool vars_contains_nonlocal)
 {
   memset (pt, 0, sizeof (struct pt_solution));
@@ -6258,7 +6263,7 @@ pt_solution_set (struct pt_solution *pt, bitmap vars,
 /* Set the points-to solution *PT to point only to the variable VAR.  */
 
 void
-pt_solution_set_var (struct pt_solution *pt, tree var)
+std_pt_solution_set_var (struct pt_solution *pt, tree var)
 {
   memset (pt, 0, sizeof (struct pt_solution));
   pt->vars = BITMAP_GGC_ALLOC ();
@@ -6276,12 +6281,12 @@ pt_solution_set_var (struct pt_solution *pt, tree var)
    this function if they were not before.  */
 
 static void
-pt_solution_ior_into (struct pt_solution *dest, struct pt_solution *src)
+std_pt_solution_ior_into (struct pt_solution *dest, struct pt_solution *src)
 {
   dest->anything |= src->anything;
   if (dest->anything)
     {
-      pt_solution_reset (dest);
+      std_pt_solution_reset (dest);
       return;
     }
 
@@ -6302,11 +6307,11 @@ pt_solution_ior_into (struct pt_solution *dest, struct pt_solution *src)
 
 /* Return true if the points-to solution *PT is empty.  */
 
-unsigned pt_solution_to_vi_id(struct pt_solution *pt) {
+unsigned std_pt_solution_to_vi_id(struct pt_solution *pt) {
 	return pt->varid;
 }
 
-unsigned long pt_solution_size(struct pt_solution *pt) {
+unsigned long std_pt_solution_size(struct pt_solution *pt) {
 	if (pt->vars)
 		return bitmap_count_bits(pt->vars);
 	else 
@@ -6314,7 +6319,7 @@ unsigned long pt_solution_size(struct pt_solution *pt) {
 }
 
 bool
-pt_solution_empty_p (struct pt_solution *pt)
+std_pt_solution_empty_p (struct pt_solution *pt)
 {
 
   bool ret = true;
@@ -6323,14 +6328,14 @@ pt_solution_empty_p (struct pt_solution *pt)
   else if (pt->vars && !bitmap_empty_p (pt->vars))
 	  ret = false;
   /* If the solution includes ESCAPED, check if that is empty.  */
-  else if (pt->escaped && !pt_solution_empty_p (&cfun->gimple_df->escaped))
+  else if (pt->escaped && !std_pt_solution_empty_p (&cfun->gimple_df->escaped))
 	  ret = false;
   /* If the solution includes ESCAPED, check if that is empty.  */
-  else if (pt->ipa_escaped && !pt_solution_empty_p (&ipa_escaped_pt))
+  else if (pt->ipa_escaped && !std_pt_solution_empty_p (&ipa_escaped_pt))
 	  ret = false;
 
   if (glob_ipa_dump) {
-    fprintf(glob_ipa_dump, "query_pt_solution_empty_p;%u;NA;%s;%lu;NA\n", pt_solution_to_vi_id(pt), ret ? "true" : "false", pt_solution_size(pt));
+    fprintf(glob_ipa_dump, "query_std_pt_solution_empty_p;%u;NA;%s;%lu;NA\n", std_pt_solution_to_vi_id(pt), ret ? "true" : "false", std_pt_solution_size(pt));
   }
 
   return ret;
@@ -6340,7 +6345,7 @@ pt_solution_empty_p (struct pt_solution *pt)
    return the var uid in *UID.  */
 
 bool
-pt_solution_singleton_p (struct pt_solution *pt, unsigned *uid)
+std_pt_solution_singleton_p (struct pt_solution *pt, unsigned *uid)
 {
 	bool ret = true;
   if (pt->anything || pt->nonlocal || pt->escaped || pt->ipa_escaped
@@ -6349,7 +6354,7 @@ pt_solution_singleton_p (struct pt_solution *pt, unsigned *uid)
     ret = false;
 
   if (glob_ipa_dump) {
-    fprintf(glob_ipa_dump, "query_pt_solution_singleton_p;%u;NA;%s;%lu;NA\n", pt_solution_to_vi_id(pt), ret ? "true" : "false", pt_solution_size(pt));
+    fprintf(glob_ipa_dump, "query_std_pt_solution_singleton_p;%u;NA;%s;%lu;NA\n", std_pt_solution_to_vi_id(pt), ret ? "true" : "false", std_pt_solution_size(pt));
   }
 
   if (ret)
@@ -6360,7 +6365,7 @@ pt_solution_singleton_p (struct pt_solution *pt, unsigned *uid)
 /* Return true if the points-to solution *PT includes global memory.  */
 
 bool
-pt_solution_includes_global (struct pt_solution *pt)
+std_pt_solution_includes_global (struct pt_solution *pt)
 {
   bool ret = false;
   if (pt->anything
@@ -6373,9 +6378,9 @@ pt_solution_includes_global (struct pt_solution *pt)
 	  ret = true;
   /* 'escaped' is also a placeholder so we have to look into it.  */
   else if (pt->escaped)
-    ret = pt_solution_includes_global (&cfun->gimple_df->escaped);
+    ret = std_pt_solution_includes_global (&cfun->gimple_df->escaped);
   else if (pt->ipa_escaped)
-    ret = pt_solution_includes_global (&ipa_escaped_pt);
+    ret = std_pt_solution_includes_global (&ipa_escaped_pt);
 
   /* ???  This predicate is not correct for the IPA-PTA solution
      as we do not properly distinguish between unit escape points
@@ -6384,7 +6389,7 @@ pt_solution_includes_global (struct pt_solution *pt)
     ret = true;
 
   if (glob_ipa_dump) {
-    fprintf(glob_ipa_dump, "query_pt_solution_includes_global;%u;NA;%s;%lu;NA\n", pt_solution_to_vi_id(pt), ret ? "true" : "false", pt_solution_size(pt));
+    fprintf(glob_ipa_dump, "query_pt_solution_includes_global;%u;NA;%s;%lu;NA\n", std_pt_solution_to_vi_id(pt), ret ? "true" : "false", std_pt_solution_size(pt));
   }
 
   return ret;
@@ -6394,7 +6399,7 @@ pt_solution_includes_global (struct pt_solution *pt)
    declaration DECL.  */
 
 static bool
-pt_solution_includes_1 (struct pt_solution *pt, const_tree decl)
+std_pt_solution_includes_1 (struct pt_solution *pt, const_tree decl)
 {
   if (pt->anything)
     return true;
@@ -6409,28 +6414,28 @@ pt_solution_includes_1 (struct pt_solution *pt, const_tree decl)
 
   /* If the solution includes ESCAPED, check it.  */
   if (pt->escaped
-      && pt_solution_includes_1 (&cfun->gimple_df->escaped, decl))
+      && std_pt_solution_includes_1 (&cfun->gimple_df->escaped, decl))
     return true;
 
   /* If the solution includes ESCAPED, check it.  */
   if (pt->ipa_escaped
-      && pt_solution_includes_1 (&ipa_escaped_pt, decl))
+      && std_pt_solution_includes_1 (&ipa_escaped_pt, decl))
     return true;
 
   return false;
 }
 
 bool
-pt_solution_includes (struct pt_solution *pt, const_tree decl)
+std_pt_solution_includes (struct pt_solution *pt, const_tree decl)
 {
-  bool res = pt_solution_includes_1 (pt, decl);
+  bool res = std_pt_solution_includes_1 (pt, decl);
   if (res)
-    ++pta_stats.pt_solution_includes_may_alias;
+    ++pta_stats.std_pt_solution_includes_may_alias;
   else
-    ++pta_stats.pt_solution_includes_no_alias;
+    ++pta_stats.std_pt_solution_includes_no_alias;
 
   if (glob_ipa_dump) {
-    fprintf(glob_ipa_dump, "query_pt_solution_includes;%u;NA;%s;%lu;NA\n", pt_solution_to_vi_id(pt), res ? "true" : "false", pt_solution_size(pt));
+    fprintf(glob_ipa_dump, "query_std_pt_solution_includes;%u;NA;%s;%lu;NA\n", std_pt_solution_to_vi_id(pt), res ? "true" : "false", std_pt_solution_size(pt));
   }
 
   return res;
@@ -6440,7 +6445,7 @@ pt_solution_includes (struct pt_solution *pt, const_tree decl)
    intersection.  */
 
 static bool
-pt_solutions_intersect_1 (struct pt_solution *pt1, struct pt_solution *pt2)
+std_pt_solutions_intersect_1 (struct pt_solution *pt1, struct pt_solution *pt2)
 {
   if (pt1->anything || pt2->anything)
     return true;
@@ -6466,7 +6471,7 @@ pt_solutions_intersect_1 (struct pt_solution *pt1, struct pt_solution *pt2)
   /* Check the escaped solution if required.
      ???  Do we need to check the local against the IPA escaped sets?  */
   if ((pt1->ipa_escaped || pt2->ipa_escaped)
-      && !pt_solution_empty_p (&ipa_escaped_pt))
+      && !std_pt_solution_empty_p (&ipa_escaped_pt))
     {
       /* If both point to escaped memory and that solution
 	 is not empty they alias.  */
@@ -6476,9 +6481,9 @@ pt_solutions_intersect_1 (struct pt_solution *pt1, struct pt_solution *pt2)
       /* If either points to escaped memory see if the escaped solution
 	 intersects with the other.  */
       if ((pt1->ipa_escaped
-	   && pt_solutions_intersect_1 (&ipa_escaped_pt, pt2))
+	   && std_pt_solutions_intersect_1 (&ipa_escaped_pt, pt2))
 	  || (pt2->ipa_escaped
-	      && pt_solutions_intersect_1 (&ipa_escaped_pt, pt1)))
+	      && std_pt_solutions_intersect_1 (&ipa_escaped_pt, pt1)))
 	return true;
     }
 
@@ -6489,15 +6494,15 @@ pt_solutions_intersect_1 (struct pt_solution *pt1, struct pt_solution *pt2)
 }
 
 bool
-pt_solutions_intersect (struct pt_solution *pt1, struct pt_solution *pt2)
+std_pt_solutions_intersect (struct pt_solution *pt1, struct pt_solution *pt2)
 {
-  bool res = pt_solutions_intersect_1 (pt1, pt2);
+  bool res = std_pt_solutions_intersect_1 (pt1, pt2);
   if (res)
-    ++pta_stats.pt_solutions_intersect_may_alias;
+    ++pta_stats.std_pt_solutions_intersect_may_alias;
   else
-    ++pta_stats.pt_solutions_intersect_no_alias;
+    ++pta_stats.std_pt_solutions_intersect_no_alias;
   if (glob_ipa_dump) {
-    fprintf(glob_ipa_dump, "query_pt_solution_intersect;%u;%u;%s;%lu;%lu\n", pt_solution_to_vi_id(pt1), pt_solution_to_vi_id(pt2), res ? "true" : "false", pt_solution_size(pt1), pt_solution_size(pt2));
+    fprintf(glob_ipa_dump, "query_pt_solution_intersect;%u;%u;%s;%lu;%lu\n", std_pt_solution_to_vi_id(pt1), std_pt_solution_to_vi_id(pt2), res ? "true" : "false", std_pt_solution_size(pt1), std_pt_solution_size(pt2));
   }
   return res;
 }
@@ -7315,7 +7320,7 @@ make_pass_build_ealias (gcc::context *ctxt)
 
 /* IPA PTA solutions for ESCAPED.  */
 struct pt_solution ipa_escaped_pt
-  = { true, false, false, false, false, false, false, false, NULL, 0 };
+  = { true, false, false, false, false, false, false, false, NULL, NULL, 0 };
 
 /* Associate node with varinfo DATA. Worker for
    cgraph_for_node_and_aliases.  */
@@ -7598,8 +7603,8 @@ ipa_pta_execute (void)
 		      || bitmap_bit_p (fi->solution, nonlocal_id)
 		      || bitmap_bit_p (fi->solution, escaped_id))
 		    {
-		      pt_solution_reset (gimple_call_clobber_set (stmt));
-		      pt_solution_reset (gimple_call_use_set (stmt));
+		      std_pt_solution_reset (gimple_call_clobber_set (stmt));
+		      std_pt_solution_reset (gimple_call_use_set (stmt));
 		    }
 		  else
 		    {
@@ -7630,13 +7635,13 @@ ipa_pta_execute (void)
 			    {
 			      sol = find_what_var_points_to
 				      (first_vi_for_offset (vi, fi_uses));
-			      pt_solution_ior_into (uses, &sol);
+			      std_pt_solution_ior_into (uses, &sol);
 			    }
 			  if (!clobbers->anything)
 			    {
 			      sol = find_what_var_points_to
 				      (first_vi_for_offset (vi, fi_clobbers));
-			      pt_solution_ior_into (clobbers, &sol);
+			      std_pt_solution_ior_into (clobbers, &sol);
 			    }
 			}
 		    }

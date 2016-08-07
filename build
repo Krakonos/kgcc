@@ -54,7 +54,7 @@ if [ $PRETEND -eq 1 ]; then
 fi
 
 export CFLAGS="-fno-omit-frame-pointer -g"
-export CXXFLAGS="$CFLAGS -std=c++98 -Wno-c++11-compat"
+export CXXFLAGS="$CFLAGS"
 export LDFLAGS="$CFLAGS"
 export CXX="ccache g++"
 export CC="ccache gcc"
