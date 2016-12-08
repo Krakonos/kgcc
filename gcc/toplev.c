@@ -1952,6 +1952,7 @@ dump_memory_report (bool final)
   dump_ggc_loc_statistics (final);
   dump_alias_stats (stderr);
   dump_pta_stats (stderr);
+  ik_dump_pta_stats (stderr);
 }
 
 /* Clean up: close opened files, etc.  */
