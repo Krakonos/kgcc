@@ -6956,7 +6956,12 @@ ipa_kpta_execute (void)
   }
 
   /* Prepare the BloomapFamily */
-  family = BloomapFamily::forElementsAndProb(128, 0.01);
+  unsigned b_size = PARAM_VALUE(PARAM_KPTA_BLOOMAP_SIZE);
+  double   b_prec = 1.0/(1.0*PARAM_VALUE(PARAM_KPTA_BLOOMAP_PRECISION));
+  if (dump_file) {
+	fprintf(dump_file, "Starting IPA-KPTA with bloomaps of size %i and precision %f.\n", b_size, b_prec);
+  }
+  family = BloomapFamily::forElementsAndProb(b_size, b_prec);
 
   init_alias_vars ();
 

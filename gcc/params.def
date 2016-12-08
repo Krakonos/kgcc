@@ -1035,6 +1035,19 @@ DEFPARAM (PARAM_IPA_MAX_AA_STEPS,
 	  "parameter analysis based on alias analysis in any given function",
 	  25000, 0, 0)
 
+/* IPA-KPTA tweaks */
+
+DEFPARAM (PARAM_KPTA_BLOOMAP_SIZE,
+	  "kpta-bloomap-size",
+	  "Expected number of elements in a Bloomap.",
+	  128, 32, 0)
+
+DEFPARAM (PARAM_KPTA_BLOOMAP_PRECISION,
+	  "kpta-bloomap-precision",
+	  "Inverted value to bloomap precision. Values of 100 will result in a bloomap"
+	  "with false-probability rate fp=0.01",
+	  100, 10, 0)
+
 /* WHOPR partitioning configuration.  */
 
 DEFPARAM (PARAM_LTO_PARTITIONS,
