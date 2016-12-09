@@ -186,6 +186,7 @@ extern void pt_solution_set (struct pt_solution *, bitmap, bool);
 extern void pt_solution_set_var (struct pt_solution *, tree);
 
 extern void dump_pta_stats (FILE *);
+extern void ik_dump_pta_stats (FILE *);
 
 extern GTY(()) struct pt_solution ipa_escaped_pt;
 extern GTY(()) struct pt_solution ik_ipa_escaped_pt;
