@@ -1,0 +1,3 @@
+[submodule "gcc/bloomap"]
+	path = gcc/bloomap
+	url = https://github.com/Krakonos/Bloomap.git
