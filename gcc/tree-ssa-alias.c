@@ -2826,9 +2826,9 @@ walk_aliased_vdefs (ao_ref *ref, tree vdef,
 
 
 bool pt_solution_empty_p (struct pt_solution *sol) {
-    bool q_std = std_pt_solution_empty_p(sol);
-    bool q_ik  = ik_pt_solution_empty_p(sol);
+   bool q_std = std_pt_solution_empty_p(sol);
     if (flag_ipa_kpta && ipa_kpta_finished) {
+        bool q_ik  = ik_pt_solution_empty_p(sol);
         if (q_ik && !q_std) {
             fprintf(stderr, "pt_solution_empty_p fatal inconsistency!\n");
         }
@@ -2838,9 +2838,9 @@ bool pt_solution_empty_p (struct pt_solution *sol) {
 
 bool pt_solution_singleton_p (struct pt_solution *sol, unsigned *vi) {
     bool q_std = std_pt_solution_singleton_p(sol, vi);
-    bool q_ik  = ik_pt_solution_singleton_p(sol, vi);
-    fprintf(stderr, "pt_solution_singleton_p: ik=%s, std=%s\n", q_ik ? "true" : "false", q_std ? "true" : "false");
+    //fprintf(stderr, "pt_solution_singleton_p: ik=%s, std=%s\n", q_ik ? "true" : "false", q_std ? "true" : "false");
     if (flag_ipa_kpta && ipa_kpta_finished) {
+        bool q_ik  = ik_pt_solution_singleton_p(sol, vi);
         if (q_ik && !q_std) {
             fprintf(stderr, "pt_solution_singleton_p fatal inconsistency!\n");
         }
@@ -2850,8 +2850,8 @@ bool pt_solution_singleton_p (struct pt_solution *sol, unsigned *vi) {
 
 bool pt_solution_includes_global (struct pt_solution *sol) {
     bool q_std = std_pt_solution_includes_global(sol);
-    bool q_ik  = ik_pt_solution_includes_global(sol);
     if (flag_ipa_kpta && ipa_kpta_finished) {
+        bool q_ik  = ik_pt_solution_includes_global(sol);
         if (!q_ik && q_std) {
             fprintf(stderr, "pt_solution_includes_global fatal inconsistency!\n");
         }
@@ -2861,8 +2861,8 @@ bool pt_solution_includes_global (struct pt_solution *sol) {
 
 bool pt_solution_includes (struct pt_solution *sol, const_tree tree) {
     bool q_std = std_pt_solution_includes(sol, tree);
-    bool q_ik  = ik_pt_solution_includes(sol, tree);
     if (flag_ipa_kpta && ipa_kpta_finished) {
+        bool q_ik  = ik_pt_solution_includes(sol, tree);
         if (!q_ik && q_std) {
             fprintf(stderr, "pt_solution_includes fatal inconsistency!\n");
         }
@@ -2872,8 +2872,8 @@ bool pt_solution_includes (struct pt_solution *sol, const_tree tree) {
 
 bool pt_solutions_intersect (struct pt_solution *sol1, struct pt_solution *sol2) {
     bool q_std = std_pt_solutions_intersect(sol1, sol2);
-    bool q_ik  = ik_pt_solutions_intersect(sol1, sol2);
     if (flag_ipa_kpta && ipa_kpta_finished) {
+        bool q_ik  = ik_pt_solutions_intersect(sol1, sol2);
         if (!q_ik && q_std) {
             fprintf(stderr, "pt_solutions_intersect: ik=%s, std=%s\n", q_ik ? "true" : "false", q_std ? "true" : "false");
             fprintf(stderr, "pt_solutions_intersect fatal inconsistency!\n");

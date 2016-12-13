@@ -6565,9 +6565,10 @@ ik_pt_solutions_intersect_1 (struct pt_solution *pt1, struct pt_solution *pt2)
     }
 
   /* Now both pointers alias if their points-to solution intersects.  */
-  return (pt1->b_vars
+  bool ret = (pt1->b_vars
 	  && pt2->b_vars
-	  && pt1->b_vars->isIntersectionEmpty(pt2->b_vars));
+	  && !pt1->b_vars->isIntersectionEmpty(pt2->b_vars));
+  return ret;
 }
 
 bool
