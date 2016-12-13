@@ -368,10 +368,10 @@ static inline bool type_can_have_subvars (const_tree);
 /* Pool of variable info structures.  */
 static alloc_pool variable_info_pool;
 
-/* Map varinfo to final pt_solution.  */
-static hash_map<varinfo_t, pt_solution *> *final_solutions;
-static hash_map<pt_solution *, unsigned> *final_solutions_rev;
-static struct obstack final_solutions_obstack; /* TODO: Maybe not static? */
+/* Map varinfo to final pt_solution, use the one from pta!  */
+extern hash_map<varinfo_t, pt_solution *> *final_solutions;
+extern hash_map<pt_solution *, unsigned> *final_solutions_rev;
+extern struct obstack final_solutions_obstack;
 
 /* Table of variable info structures for constraint variables.
    Indexed directly by variable info id.  */
@@ -6156,6 +6156,9 @@ static struct {
   unsigned HOST_WIDE_INT ik_pt_solution_aliases_nontriv;
 } pta_stats;
 
+
+std::vector<struct pt_solution*> solutions_nontriv;
+
 /* Compute the points-to solution *PT for the variable VI.  */
 
 static struct pt_solution
@@ -6194,7 +6197,7 @@ ik_find_what_var_points_to (varinfo_t orig_vi)
       pt->ik_nonlocal = 1;
   }
   if (vi->b_solution->contains(anything_id) || vi->b_solution->contains(integer_id)) {
-	pt->ik_anything = 1;
+      pt->ik_anything = 1;
   }
 
   /* Instead of doing extra work, simply do not create
@@ -6207,6 +6210,12 @@ ik_find_what_var_points_to (varinfo_t orig_vi)
 
   pta_stats.ik_pt_solution_aliases_nontriv++;
   pt->b_vars = vi->b_solution;
+
+  /* In this phase, we have a solution that does not alias with anything by ID.
+   * Let's store it for benchmarking purposes. */
+  solutions_nontriv.push_back(pt);
+
+  /* KTODO: We probably can free b_vars now, as it should not be shared. */
 
   /* Share the final set of variables when possible.  */
   /* KTODO: Deduplication might or might not be a great idea */
@@ -6818,9 +6827,11 @@ init_alias_vars (void)
 
   gcc_obstack_init (&fake_var_decl_obstack);
 
-  final_solutions = new hash_map<varinfo_t, pt_solution *>;
-  final_solutions_rev = new hash_map<pt_solution *, unsigned>; // unsigned is the vainfo_t->id value
-  gcc_obstack_init (&final_solutions_obstack);
+  if (!final_solutions) {
+    final_solutions = new hash_map<varinfo_t, pt_solution *>;
+    final_solutions_rev = new hash_map<pt_solution *, unsigned>; // unsigned is the vainfo_t->id value
+    gcc_obstack_init (&final_solutions_obstack);
+  }
 }
 
 /* Remove the REF and ADDRESS edges from GRAPH, as well as all the
@@ -6930,6 +6941,78 @@ solve_constraints (void)
 
   if (dump_file)
     dump_sa_points_to_info (dump_file);
+}
+
+static struct ik_intersection_stats {
+  unsigned HOST_WIDE_INT sets;
+  unsigned HOST_WIDE_INT pairs;
+  unsigned HOST_WIDE_INT empty;
+  unsigned HOST_WIDE_INT empty_with_purge;
+  unsigned HOST_WIDE_INT empty_with_legacy;
+  unsigned HOST_WIDE_INT problems;
+  unsigned HOST_WIDE_INT noset1;
+  unsigned HOST_WIDE_INT noset2;
+} ik_stats;
+
+/* This function shall be called when the solutions_nontriv vector has been
+ * filled with structures to test, and all data are consistent. It will take
+ * each two solutions, compute intersection, and report the result. This is
+ * compared to regular IPA-PTA pass if the data is available. */
+void ik_compute_statistics(void) {
+  memset(&ik_stats, 0, sizeof(struct ik_intersection_stats));
+  Bloomap* tm = family->newMap();
+  struct pt_solution *pt1, *pt2;
+  ik_stats.sets = solutions_nontriv.size();
+  for (unsigned i = 0; i < solutions_nontriv.size(); i++) {
+    pt1 = solutions_nontriv[i];
+    for (unsigned j = i+1; j < solutions_nontriv.size(); j++) {
+      pt2 = solutions_nontriv[j];
+      ik_stats.pairs++;
+      bool empty = pt1->b_vars->isIntersectionEmpty(pt2->b_vars);
+      if (empty) { 
+          ik_stats.empty++;
+          ik_stats.empty_with_purge++;
+      } else {
+          tm->clear();
+          tm->or_from(pt1->b_vars);
+          tm->intersect(pt2->b_vars);
+          empty = tm->isEmpty();
+          if (empty) ik_stats.empty_with_purge++;
+      }
+      if (flag_ipa_pta) {
+        if (pt1->vars == NULL) ik_stats.noset1++;
+        if (pt2->vars == NULL) ik_stats.noset2++;
+        if (pt1->vars && pt2->vars) {
+          if(!bitmap_intersect_p(pt1->vars, pt2->vars)) {
+              ik_stats.empty_with_legacy++;
+          } else {
+              /* bitmap reports non-empty intersection, but we detected empty.*/
+              if (empty) ik_stats.problems++;
+          }
+        }
+      }
+    }
+  }
+}
+
+void dump_ik_statistics(FILE *f) {
+  ik_compute_statistics();
+  fprintf(f, "IK Statistics:"
+             "\n   Sets tested:                      " HOST_WIDE_INT_PRINT_DEC
+             "\n   Pairs crosschecked:               " HOST_WIDE_INT_PRINT_DEC 
+             "\n   Intersections empty:              " HOST_WIDE_INT_PRINT_DEC " (%3.2f%%)"
+             "\n   Intersections empty (with purge): " HOST_WIDE_INT_PRINT_DEC " (%3.2f%%)"
+             "\n   Intersections empty (by legacy):  " HOST_WIDE_INT_PRINT_DEC " (%3.2f%%)"
+             "\n   Problems found:                   " HOST_WIDE_INT_PRINT_DEC
+             "\n",
+          ik_stats.sets,
+          ik_stats.pairs, 
+          ik_stats.empty,             100.0*ik_stats.empty             /ik_stats.pairs,
+          ik_stats.empty_with_purge,  100.0*ik_stats.empty_with_purge  /ik_stats.pairs,
+          ik_stats.empty_with_legacy, 100.0*ik_stats.empty_with_legacy /ik_stats.pairs,
+          ik_stats.problems
+  );
+  fprintf(f, "   Nosets: " HOST_WIDE_INT_PRINT_DEC ", " HOST_WIDE_INT_PRINT_DEC "\n", ik_stats.noset1, ik_stats.noset2);
 }
 
 /* IPA PTA solutions for ESCAPED.  */
@@ -7232,7 +7315,6 @@ ipa_kpta_execute (void)
 		  else
 		    {
 		      //bitmap_iterator bi;
-		      //unsigned i;
 		      struct pt_solution *uses, *clobbers;
 
 		      uses = gimple_call_use_set (stmt);
@@ -7244,8 +7326,9 @@ ipa_kpta_execute (void)
 		      uses->ik_ipa_escaped = 1;
 		      clobbers->ik_nonlocal = 1;
 		      clobbers->ik_ipa_escaped = 1;
-#if 0 
-		      EXECUTE_IF_SET_IN_BITMAP (fi->solution, 0, i, bi)
+#if 1
+		      unsigned i;
+                      BLOOMAP_FOR_EACH(i, fi->b_solution)
 			{
 			  struct pt_solution sol;
 
@@ -7284,6 +7367,7 @@ ipa_kpta_execute (void)
 
   fprintf(stderr, "ik-structalias finished.\n");
   ik_dump_pta_stats(stderr);
+  dump_ik_statistics(stderr);
   ipa_kpta_finished = true;
 
   //delete_points_to_sets (); // KTODO: WTF?

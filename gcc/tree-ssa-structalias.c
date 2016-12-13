@@ -364,8 +364,8 @@ static inline bool type_can_have_subvars (const_tree);
 static alloc_pool variable_info_pool;
 
 /* Map varinfo to final pt_solution.  */
-static hash_map<varinfo_t, pt_solution *> *final_solutions;
-static hash_map<pt_solution *, unsigned> *final_solutions_rev;
+hash_map<varinfo_t, pt_solution *> *final_solutions;
+hash_map<pt_solution *, unsigned> *final_solutions_rev;
 struct obstack final_solutions_obstack;
 
 /* Table of variable info structures for constraint variables.
