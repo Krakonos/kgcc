@@ -185,6 +185,8 @@ extern void pt_solution_reset (struct pt_solution *);
 extern void pt_solution_set (struct pt_solution *, bitmap, bool);
 extern void pt_solution_set_var (struct pt_solution *, tree);
 
+extern bool ipa_kpta_finished;
+
 extern void dump_pta_stats (FILE *);
 extern void ik_dump_pta_stats (FILE *);
 

@@ -243,6 +243,8 @@ static bool use_field_sensitive = true;
 static int in_ipa_mode = 0;
 static FILE *glob_ipa_dump = NULL;
 
+bool ipa_kpta_finished = false;
+
 /* Used for predecessor bitmaps. */
 static bitmap_obstack predbitmap_obstack;
 
@@ -6286,7 +6288,12 @@ ik_dump_pta_stats (FILE *s)
 void
 ik_pt_solution_reset (struct pt_solution *pt)
 {
-  memset (pt, 0, sizeof (struct pt_solution));
+ /* TODO: As the pt_solution structure is shared with regular IPA-PTA, we can't
+  * just blindly clear it. This has some performance hit, as it wastes memory,
+  * and should be fixed once only one structure is used.
+  */
+  //memset (pt, 0, sizeof (struct pt_solution));
+
   pt->ik_anything = true;
 }
 
@@ -6377,12 +6384,13 @@ unsigned ik_pt_solution_to_vi_id(struct pt_solution *pt) {
 	return pt->varid;
 }
 
+/* FIXME: Though the name is _size, the actual value returned is the popcount of the filter */
 unsigned long ik_pt_solution_size(struct pt_solution *pt) {
-  /* KTODO:add_bloomap */
-	if (pt->vars)
-		return bitmap_count_bits(pt->vars);
-	else 
-		return -1;
+    /* KTODO:add_bloomap */
+    if (pt->b_vars)
+	return pt->b_vars->popcount();
+    else 
+	return -1;
 }
 
 bool
@@ -6417,7 +6425,7 @@ ik_pt_solution_singleton_p (struct pt_solution *pt, unsigned *uid)
   if (glob_ipa_dump) {
     fprintf(glob_ipa_dump, "query_ik_pt_solution_singleton_p;%u;NA;%s;%lu;NA\n", ik_pt_solution_to_vi_id(pt), "false", ik_pt_solution_size(pt));
   }
-return false;
+  return false;
 #if 0
 	bool ret = true;
   if (pt->ik_anything || pt->ik_nonlocal || pt->ik_escaped || pt->ik_ipa_escaped
@@ -6565,15 +6573,13 @@ ik_pt_solutions_intersect_1 (struct pt_solution *pt1, struct pt_solution *pt2)
 bool
 ik_pt_solutions_intersect (struct pt_solution *pt1, struct pt_solution *pt2)
 {
-return true;
-  /* KTODO:add_bloomap */
   bool res = ik_pt_solutions_intersect_1 (pt1, pt2);
   if (res)
     ++pta_stats.ik_pt_solutions_intersect_may_alias;
   else
     ++pta_stats.ik_pt_solutions_intersect_no_alias;
   if (glob_ipa_dump) {
-    fprintf(glob_ipa_dump, "query_ik_pt_solution_intersect;%u;%u;%s;%lu;%lu\n", ik_pt_solution_to_vi_id(pt1), ik_pt_solution_to_vi_id(pt2), res ? "true" : "false", ik_pt_solution_size(pt1), ik_pt_solution_size(pt2));
+    fprintf(glob_ipa_dump, "query_ik_pt_solutions_intersect;%u;%u;%s;%lu;%lu\n", ik_pt_solution_to_vi_id(pt1), ik_pt_solution_to_vi_id(pt2), res ? "true" : "false", ik_pt_solution_size(pt1), ik_pt_solution_size(pt2));
   }
   return res;
 }
@@ -6959,7 +6965,7 @@ ipa_kpta_execute (void)
   unsigned b_size = PARAM_VALUE(PARAM_KPTA_BLOOMAP_SIZE);
   double   b_prec = 1.0/(1.0*PARAM_VALUE(PARAM_KPTA_BLOOMAP_PRECISION));
   if (dump_file) {
-	fprintf(dump_file, "Starting IPA-KPTA with bloomaps of size %i and precision %f.\n", b_size, b_prec);
+	fprintf(dump_file, "Starting IPA-KPTA with bloomaps of size %i and precision %f.", b_size, b_prec);
   }
   family = BloomapFamily::forElementsAndProb(b_size, b_prec);
 
@@ -7277,6 +7283,7 @@ ipa_kpta_execute (void)
 
   fprintf(stderr, "ik-structalias finished.\n");
   ik_dump_pta_stats(stderr);
+  ipa_kpta_finished = true;
 
   //delete_points_to_sets (); // KTODO: WTF?
 
