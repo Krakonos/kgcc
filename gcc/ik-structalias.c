@@ -369,13 +369,13 @@ static inline bool type_can_have_subvars (const_tree);
 static alloc_pool variable_info_pool;
 
 /* Map varinfo to final pt_solution, use the one from pta!  */
-extern hash_map<varinfo_t, pt_solution *> *final_solutions;
-extern hash_map<pt_solution *, unsigned> *final_solutions_rev;
-extern struct obstack final_solutions_obstack;
+static hash_map<varinfo_t, pt_solution *> *final_solutions;
+static hash_map<pt_solution *, unsigned> *final_solutions_rev;
+static struct obstack final_solutions_obstack;
 
 /* Table of variable info structures for constraint variables.
    Indexed directly by variable info id.  */
-static vec<varinfo_t> varmap;
+extern vec<varinfo_t> varmap;
 
 /* Return the varmap element N */
 
@@ -6157,7 +6157,7 @@ static struct {
 } pta_stats;
 
 
-std::vector<struct pt_solution*> solutions_nontriv;
+std::vector<varinfo_t> vars_nontriv;
 
 /* Compute the points-to solution *PT for the variable VI.  */
 
@@ -6213,7 +6213,7 @@ ik_find_what_var_points_to (varinfo_t orig_vi)
 
   /* In this phase, we have a solution that does not alias with anything by ID.
    * Let's store it for benchmarking purposes. */
-  solutions_nontriv.push_back(pt);
+  vars_nontriv.push_back(vi);
 
   /* KTODO: We probably can free b_vars now, as it should not be shared. */
 
@@ -6827,11 +6827,9 @@ init_alias_vars (void)
 
   gcc_obstack_init (&fake_var_decl_obstack);
 
-  if (!final_solutions) {
-    final_solutions = new hash_map<varinfo_t, pt_solution *>;
-    final_solutions_rev = new hash_map<pt_solution *, unsigned>; // unsigned is the vainfo_t->id value
-    gcc_obstack_init (&final_solutions_obstack);
-  }
+  final_solutions = new hash_map<varinfo_t, pt_solution *>;
+  final_solutions_rev = new hash_map<pt_solution *, unsigned>; // unsigned is the vainfo_t->id value
+  gcc_obstack_init (&final_solutions_obstack);
 }
 
 /* Remove the REF and ADDRESS edges from GRAPH, as well as all the
@@ -6946,6 +6944,7 @@ solve_constraints (void)
 static struct ik_intersection_stats {
   unsigned HOST_WIDE_INT sets;
   unsigned HOST_WIDE_INT pairs;
+  unsigned HOST_WIDE_INT pairs_in_legacy;
   unsigned HOST_WIDE_INT empty;
   unsigned HOST_WIDE_INT empty_with_purge;
   unsigned HOST_WIDE_INT empty_with_legacy;
@@ -6954,36 +6953,43 @@ static struct ik_intersection_stats {
   unsigned HOST_WIDE_INT noset2;
 } ik_stats;
 
-/* This function shall be called when the solutions_nontriv vector has been
+
+varinfo_t std_lookup_vi_for_tree(tree t); /* Defined in tree-ssa-structalias.c */
+
+/* This function shall be called when the vars_nontriv vector has been
  * filled with structures to test, and all data are consistent. It will take
  * each two solutions, compute intersection, and report the result. This is
  * compared to regular IPA-PTA pass if the data is available. */
 void ik_compute_statistics(void) {
   memset(&ik_stats, 0, sizeof(struct ik_intersection_stats));
   Bloomap* tm = family->newMap();
-  struct pt_solution *pt1, *pt2;
-  ik_stats.sets = solutions_nontriv.size();
-  for (unsigned i = 0; i < solutions_nontriv.size(); i++) {
-    pt1 = solutions_nontriv[i];
-    for (unsigned j = i+1; j < solutions_nontriv.size(); j++) {
-      pt2 = solutions_nontriv[j];
+  Bloomap *pt1, *pt2;
+  ik_stats.sets = vars_nontriv.size();
+  for (unsigned i = 0; i < vars_nontriv.size(); i++) {
+    pt1 = vars_nontriv[i]->b_solution;
+    for (unsigned j = i+1; j < vars_nontriv.size(); j++) {
+      pt2 = vars_nontriv[j]->b_solution;
       ik_stats.pairs++;
-      bool empty = pt1->b_vars->isIntersectionEmpty(pt2->b_vars);
+      bool empty = pt1->isIntersectionEmpty(pt2);
       if (empty) { 
           ik_stats.empty++;
           ik_stats.empty_with_purge++;
       } else {
           tm->clear();
-          tm->or_from(pt1->b_vars);
-          tm->intersect(pt2->b_vars);
+          tm->or_from(pt1);
+          tm->intersect(pt2);
           empty = tm->isEmpty();
           if (empty) ik_stats.empty_with_purge++;
       }
       if (flag_ipa_pta) {
-        if (pt1->vars == NULL) ik_stats.noset1++;
-        if (pt2->vars == NULL) ik_stats.noset2++;
-        if (pt1->vars && pt2->vars) {
-          if(!bitmap_intersect_p(pt1->vars, pt2->vars)) {
+        /* Take the information from the original algorithm */
+        varinfo_t std_vi1 = std_lookup_vi_for_tree(vars_nontriv[i]->decl);
+        varinfo_t std_vi2 = std_lookup_vi_for_tree(vars_nontriv[j]->decl);
+        if (!(std_vi1 && std_vi1->x_solution)) ik_stats.noset1++;
+        if (!(std_vi2 && std_vi2->x_solution)) ik_stats.noset2++;
+        if (std_vi1 && std_vi2 && std_vi1->x_solution && std_vi2->x_solution) {
+          ik_stats.pairs_in_legacy++;
+          if(!bitmap_intersect_p(std_vi1->x_solution, std_vi2->x_solution)) {
               ik_stats.empty_with_legacy++;
           } else {
               /* bitmap reports non-empty intersection, but we detected empty.*/
@@ -6996,20 +7002,26 @@ void ik_compute_statistics(void) {
 }
 
 void dump_ik_statistics(FILE *f) {
+  time_t start = time(NULL);
   ik_compute_statistics();
-  fprintf(f, "IK Statistics:"
+  time_t end = time(NULL);
+
+  fprintf(f, "IK Statistics (computed in %i seconds)"
              "\n   Sets tested:                      " HOST_WIDE_INT_PRINT_DEC
              "\n   Pairs crosschecked:               " HOST_WIDE_INT_PRINT_DEC 
+             "\n   Pairs crosschecked (in legacy):   " HOST_WIDE_INT_PRINT_DEC 
              "\n   Intersections empty:              " HOST_WIDE_INT_PRINT_DEC " (%3.2f%%)"
              "\n   Intersections empty (with purge): " HOST_WIDE_INT_PRINT_DEC " (%3.2f%%)"
              "\n   Intersections empty (by legacy):  " HOST_WIDE_INT_PRINT_DEC " (%3.2f%%)"
              "\n   Problems found:                   " HOST_WIDE_INT_PRINT_DEC
              "\n",
+          end-start,
           ik_stats.sets,
           ik_stats.pairs, 
+          ik_stats.pairs_in_legacy,
           ik_stats.empty,             100.0*ik_stats.empty             /ik_stats.pairs,
           ik_stats.empty_with_purge,  100.0*ik_stats.empty_with_purge  /ik_stats.pairs,
-          ik_stats.empty_with_legacy, 100.0*ik_stats.empty_with_legacy /ik_stats.pairs,
+          ik_stats.empty_with_legacy, 100.0*ik_stats.empty_with_legacy /ik_stats.pairs_in_legacy,
           ik_stats.problems
   );
   fprintf(f, "   Nosets: " HOST_WIDE_INT_PRINT_DEC ", " HOST_WIDE_INT_PRINT_DEC "\n", ik_stats.noset1, ik_stats.noset2);

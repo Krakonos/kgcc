@@ -370,7 +370,7 @@ struct obstack final_solutions_obstack;
 
 /* Table of variable info structures for constraint variables.
    Indexed directly by variable info id.  */
-static vec<varinfo_t> varmap;
+vec<varinfo_t> varmap;
 
 /* Return the varmap element N */
 
@@ -2863,6 +2863,12 @@ lookup_vi_for_tree (tree t)
     return NULL;
 
   return *slot;
+}
+
+varinfo_t
+std_lookup_vi_for_tree(tree t)
+{
+  return lookup_vi_for_tree(t);
 }
 
 /* Return a printable name for DECL  */
