@@ -6162,24 +6162,26 @@ std::vector<varinfo_t> vars_nontriv;
 /* Compute the points-to solution *PT for the variable VI.  */
 
 static struct pt_solution
-ik_find_what_var_points_to (varinfo_t orig_vi)
+ik_find_what_var_points_to (varinfo_t orig_vi, struct pt_solution* pt)
 {
   //bitmap finished_solution;
   //bitmap result;
   varinfo_t vi;
-  struct pt_solution *pt;
 
   /* This variable may have been collapsed, let's get the real
      variable.  */
   vi = get_varinfo (find (orig_vi->id));
 
-  /* See if we have already computed the solution and return it.  */
-  pt_solution **slot = &final_solutions->get_or_insert (vi);
-  if (*slot != NULL)
-    return **slot;
+  if (pt == NULL) {
+    gcc_assert(0);
+    /* See if we have already computed the solution and return it.  */
+    pt_solution **slot = &final_solutions->get_or_insert (vi);
+    if (*slot != NULL)
+      return **slot;
 
-  *slot = pt = XOBNEW (&final_solutions_obstack, struct pt_solution);
-  memset (pt, 0, sizeof (struct pt_solution));
+    *slot = pt = XOBNEW (&final_solutions_obstack, struct pt_solution);
+    memset (pt, 0, sizeof (struct pt_solution));
+  }
 
   /* Translate artificial variables into SSA_NAME_PTR_INFO
      attributes.  */
@@ -6270,7 +6272,7 @@ ik_find_what_p_points_to (tree p)
     return;
 
   pi = get_ptr_info (p);
-  pi->pt = ik_find_what_var_points_to (vi);
+  ik_find_what_var_points_to (vi, &pi->pt);
 }
 
 
@@ -6402,7 +6404,6 @@ unsigned ik_pt_solution_to_vi_id(struct pt_solution *pt) {
 
 /* FIXME: Though the name is _size, the actual value returned is the popcount of the filter */
 unsigned long ik_pt_solution_size(struct pt_solution *pt) {
-    /* KTODO:add_bloomap */
     if (pt->b_vars)
 	return pt->b_vars->popcount();
     else 
@@ -7216,7 +7217,8 @@ ipa_kpta_execute (void)
      ???  Note that the computed escape set is not correct
      for the whole unit as we fail to consider graph edges to
      externally visible functions.  */
-  ik_ipa_escaped_pt = ik_find_what_var_points_to (get_varinfo (escaped_id));
+  //ik_ipa_escaped_pt = ik_find_what_var_points_to (get_varinfo (escaped_id));
+  ik_find_what_var_points_to (get_varinfo (escaped_id), &ik_ipa_escaped_pt);
 
   /* Make sure the ESCAPED solution (which is used as placeholder in
      other solutions) does not reference itself.  This simplifies
@@ -7268,12 +7270,8 @@ ipa_kpta_execute (void)
 		  && (fi = lookup_vi_for_tree (decl))
 		  && fi->is_fn_info)
 		{
-		  *gimple_call_clobber_set (stmt)
-		     = ik_find_what_var_points_to
-		         (first_vi_for_offset (fi, fi_clobbers));
-		  *gimple_call_use_set (stmt)
-		     = ik_find_what_var_points_to
-		         (first_vi_for_offset (fi, fi_uses));
+		  ik_find_what_var_points_to (first_vi_for_offset (fi, fi_clobbers), gimple_call_clobber_set (stmt) );
+		  ik_find_what_var_points_to (first_vi_for_offset (fi, fi_uses), gimple_call_use_set (stmt) );
 		}
 	      /* Handle direct calls to external functions.  */
 	      else if (decl)
@@ -7283,7 +7281,7 @@ ipa_kpta_execute (void)
 		    memset (pt, 0, sizeof (struct pt_solution));
 		  else if ((vi = lookup_call_use_vi (stmt)) != NULL)
 		    {
-		      *pt = ik_find_what_var_points_to (vi);
+		      ik_find_what_var_points_to (vi, pt);
 		      /* Escaped (and thus nonlocal) variables are always
 			 implicitly used by calls.  */
 		      /* ???  ESCAPED can be empty even though NONLOCAL
@@ -7304,7 +7302,7 @@ ipa_kpta_execute (void)
 		    memset (pt, 0, sizeof (struct pt_solution));
 		  else if ((vi = lookup_call_clobber_vi (stmt)) != NULL)
 		    {
-		      *pt = ik_find_what_var_points_to (vi);
+		      ik_find_what_var_points_to (vi, pt);
 		      /* Escaped (and thus nonlocal) variables are always
 			 implicitly clobbered by calls.  */
 		      /* ???  ESCAPED can be empty even though NONLOCAL
@@ -7364,14 +7362,12 @@ ipa_kpta_execute (void)
 
 			  if (!uses->ik_anything)
 			    {
-			      sol = ik_find_what_var_points_to
-				      (first_vi_for_offset (vi, fi_uses));
+			      ik_find_what_var_points_to (first_vi_for_offset (vi, fi_uses), &sol);
 			      ik_pt_solution_ior_into (uses, &sol);
 			    }
 			  if (!clobbers->ik_anything)
 			    {
-			      sol = ik_find_what_var_points_to
-				      (first_vi_for_offset (vi, fi_clobbers));
+			      ik_find_what_var_points_to (first_vi_for_offset (vi, fi_clobbers), &sol);
 			      ik_pt_solution_ior_into (clobbers, &sol);
 			    }
 			}
