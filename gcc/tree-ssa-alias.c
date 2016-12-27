@@ -18,6 +18,7 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#include "bloomap.h"
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
@@ -483,22 +484,32 @@ dump_points_to_solution (FILE *file, struct pt_solution *pt)
 {
   if (pt->anything)
     fprintf (file, ", points-to anything");
+  if (pt->ik_anything)
+    fprintf (file, ", points-to ik-anything");
 
   if (pt->nonlocal)
     fprintf (file, ", points-to non-local");
+  if (pt->ik_nonlocal)
+    fprintf (file, ", points-to ik-non-local");
 
   if (pt->escaped)
     fprintf (file, ", points-to escaped");
+  if (pt->ik_escaped)
+    fprintf (file, ", points-to ik-escaped");
 
   if (pt->ipa_escaped)
     fprintf (file, ", points-to unit escaped");
+  if (pt->ik_ipa_escaped)
+    fprintf (file, ", points-to ik-unit escaped");
 
   if (pt->null)
     fprintf (file, ", points-to NULL");
+  if (pt->ik_null)
+    fprintf (file, ", points-to ik-NULL");
 
   if (pt->vars)
     {
-      fprintf (file, ", points-to vars: ");
+      fprintf (file, ", \npoints-to vars: ");
       dump_decl_set (file, pt->vars);
       if (pt->vars_contains_nonlocal
 	  && pt->vars_contains_escaped_heap)
@@ -512,7 +523,16 @@ dump_points_to_solution (FILE *file, struct pt_solution *pt)
 	fprintf (file, " (escaped heap)");
       else if (pt->vars_contains_escaped)
 	fprintf (file, " (escaped)");
+      fprintf(file, "\n");
     }
+  if (pt->b_vars) {
+      fprintf(file, ", ik points-to vars: { ");
+      unsigned i;
+      BLOOMAP_FOR_EACH(i, pt->b_vars) {
+        fprintf(file, "%lu ", i);
+      }
+      fprintf(file, "}\n");
+  }
 }
 
 
@@ -2865,13 +2885,28 @@ bool pt_solution_includes_global (struct pt_solution *sol) {
     } else return q_std;
 }
 
-bool pt_solution_includes (struct pt_solution *sol, const_tree tree) {
+bool pt_solution_includes (struct pt_solution *sol, tree tree) {
     bool q_std = std_pt_solution_includes(sol, tree);
     if (flag_ipa_kpta && ipa_kpta_finished) {
         bool q_ik  = ik_pt_solution_includes(sol, tree);
         if (flag_ipa_pta) {
           if (!q_ik && q_std) {
-                fprintf(stderr, "pt_solution_includes fatal inconsistency!\n");
+                unsigned long popcount = -1;
+                if (sol->b_vars) popcount = sol->b_vars->popcount();
+                fprintf(stderr, "pt_solution_includes fatal inconsistency! varid = %lu, b_vars=%lu, popcount=%lu\n", 
+                        sol->varid,
+                        (unsigned long ) sol->b_vars,
+                        popcount);
+                if (sol->vars_contains_nonlocal)
+                  fprintf(stderr, "Contains nonlocal!");
+                if (sol->ik_vars_contains_nonlocal)
+                  fprintf(stderr, "Contains ik_nonlocal!");
+
+                  {
+                    dump_points_to_solution(stderr, sol);
+                    fprintf(stderr, "\n");
+                  }
+                //if (sol->b_vars) sol->b_vars->dump();
           }
         }
         return q_ik;
@@ -2904,10 +2939,15 @@ void pt_solution_set (struct pt_solution *sol, bitmap vars, bool vars_contains_n
     memset (sol, 0, sizeof (struct pt_solution));
     std_pt_solution_set(sol, vars, vars_contains_nonlocal);
     ik_pt_solution_set(sol, vars, vars_contains_nonlocal);
+    sol->anything = true;
+    sol->ik_anything = true;
 }
 
 void pt_solution_set_var (struct pt_solution *sol, tree var) {
     memset (sol, 0, sizeof (struct pt_solution));
     std_pt_solution_set_var(sol, var);
     ik_pt_solution_set_var(sol, var);
+
+    sol->anything = true;
+    sol->ik_anything = true;
 }

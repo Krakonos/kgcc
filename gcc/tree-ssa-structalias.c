@@ -6083,6 +6083,7 @@ set_uids_in_ptset (bitmap into, bitmap from, struct pt_solution *pt)
 	      && !DECL_PT_UID_SET_P (vi->decl))
 	    SET_DECL_PT_UID (vi->decl, DECL_UID (vi->decl));
           gcc_assert(DECL_PT_UID(vi->decl) == DECL_UID(vi->decl));
+//          gcc_assert(i == DECL_PT_UID(vi->decl));
 
 	  /* Add the decl to the points-to set.  Note that the points-to
 	     set contains global variables.  */

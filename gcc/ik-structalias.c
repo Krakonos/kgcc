@@ -1075,7 +1075,7 @@ set_union_with_increment  (Bloomap* to, Bloomap* delta, HOST_WIDE_INT inc,
 	  	changed |= to->add(di);
 	  }
       }
-	 //changed |= to->add(anything_id); /* FIXME: Check if this matters in precision (via the regular analysis). */
+      changed |= to->add(anything_id); /* FIXME: Check if this matters in precision (via the regular analysis). */
       return changed;
     }
   /* KTODO: Shit. */
@@ -6497,7 +6497,7 @@ ik_pt_solution_includes_global (struct pt_solution *pt)
    declaration DECL.  */
 
 static bool
-ik_pt_solution_includes_1 (struct pt_solution *pt, const_tree decl)
+ik_pt_solution_includes_1 (struct pt_solution *pt, tree decl)
 {
   if (pt->ik_anything)
     return true;
@@ -6510,8 +6510,12 @@ ik_pt_solution_includes_1 (struct pt_solution *pt, const_tree decl)
   if (!pt->b_vars)
       return true;
 
+  varinfo_t vi = lookup_vi_for_tree(decl);
+  if (!vi)
+    return true;
+
   if (pt->b_vars
-      && pt->b_vars->contains(DECL_PT_UID (decl)))
+      && pt->b_vars->contains(vi->id))
     return true;
 
   /* If the solution includes ESCAPED, check it, unless this is the ESCAPED
@@ -6524,7 +6528,7 @@ ik_pt_solution_includes_1 (struct pt_solution *pt, const_tree decl)
 }
 
 bool
-ik_pt_solution_includes (struct pt_solution *pt, const_tree decl)
+ik_pt_solution_includes (struct pt_solution *pt, tree decl)
 {
   bool res = ik_pt_solution_includes_1 (pt, decl);
   if (res)
@@ -7223,7 +7227,7 @@ ipa_kpta_execute (void)
   /* Make sure the ESCAPED solution (which is used as placeholder in
      other solutions) does not reference itself.  This simplifies
      points-to solution queries.  */
-  ik_ipa_escaped_pt.ipa_escaped = 0;
+  ik_ipa_escaped_pt.ik_ipa_escaped = 0;
 
   /* Assign the points-to sets to the SSA names in the unit.  */
   FOR_EACH_DEFINED_FUNCTION (node)
