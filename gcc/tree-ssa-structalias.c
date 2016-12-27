@@ -239,7 +239,7 @@
 
 static bool use_field_sensitive = true;
 static int in_ipa_mode = 0;
-static FILE *glob_ipa_dump = NULL;
+FILE *glob_ipa_dump = NULL;
 
 /* Used for predecessor bitmaps. */
 static bitmap_obstack predbitmap_obstack;
@@ -6082,6 +6082,7 @@ set_uids_in_ptset (bitmap into, bitmap from, struct pt_solution *pt)
 	  if (in_ipa_mode
 	      && !DECL_PT_UID_SET_P (vi->decl))
 	    SET_DECL_PT_UID (vi->decl, DECL_UID (vi->decl));
+          gcc_assert(DECL_PT_UID(vi->decl) == DECL_UID(vi->decl));
 
 	  /* Add the decl to the points-to set.  Note that the points-to
 	     set contains global variables.  */
@@ -6342,9 +6343,11 @@ std_pt_solution_empty_p (struct pt_solution *pt)
   else if (pt->ipa_escaped && !std_pt_solution_empty_p (&ipa_escaped_pt))
 	  ret = false;
 
+#ifdef KPTA_REPORT_ALL
   if (glob_ipa_dump) {
     fprintf(glob_ipa_dump, "query_std_pt_solution_empty_p;%u;NA;%s;%lu;NA\n", std_pt_solution_to_vi_id(pt), ret ? "true" : "false", std_pt_solution_size(pt));
   }
+#endif
 
   return ret;
 }
@@ -6361,9 +6364,11 @@ std_pt_solution_singleton_p (struct pt_solution *pt, unsigned *uid)
       || !bitmap_single_bit_set_p (pt->vars))
     ret = false;
 
+#ifdef KPTA_REPORT_ALL
   if (glob_ipa_dump) {
     fprintf(glob_ipa_dump, "query_std_pt_solution_singleton_p;%u;NA;%s;%lu;NA\n", std_pt_solution_to_vi_id(pt), ret ? "true" : "false", std_pt_solution_size(pt));
   }
+#endif
 
   if (ret)
   	*uid = bitmap_first_set_bit (pt->vars);
@@ -6396,9 +6401,11 @@ std_pt_solution_includes_global (struct pt_solution *pt)
   else if (cfun->gimple_df->ipa_pta)
     ret = true;
 
+#if KPTA_REPORT_ALL
   if (glob_ipa_dump) {
     fprintf(glob_ipa_dump, "query_std_pt_solution_includes_global;%u;NA;%s;%lu;NA\n", std_pt_solution_to_vi_id(pt), ret ? "true" : "false", std_pt_solution_size(pt));
   }
+#endif
 
   return ret;
 }
@@ -7352,7 +7359,7 @@ ipa_pta_execute (void)
   in_ipa_mode = 1;
   
   /* A file to dump some data in, mostly statistics. */
-  if (dump_file) {
+  if (dump_file && glob_ipa_dump == NULL) {
     glob_ipa_dump = dump_begin (TDI_krakonos, NULL);
   }
 

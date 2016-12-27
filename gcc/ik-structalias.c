@@ -241,7 +241,7 @@
 
 static bool use_field_sensitive = true;
 static int in_ipa_mode = 0;
-static FILE *glob_ipa_dump = NULL;
+extern FILE *glob_ipa_dump;
 
 bool ipa_kpta_finished = false;
 
@@ -6186,6 +6186,7 @@ ik_find_what_var_points_to (varinfo_t orig_vi)
   if (vi->b_solution->contains(nothing_id)) {
       pt->ik_null = 1;
   }
+
   if (vi->b_solution->contains(escaped_id)) {
       pt->ik_ipa_escaped = 1;
       /* Expand some special vars of ESCAPED in-place here.  */
@@ -6193,10 +6194,16 @@ ik_find_what_var_points_to (varinfo_t orig_vi)
       if (evi->b_solution->contains(nonlocal_id))
 	  pt->ik_nonlocal = 1;
   }
+
   if (vi->b_solution->contains(nonlocal_id)) {
       pt->ik_nonlocal = 1;
   }
-  if (vi->b_solution->contains(anything_id) || vi->b_solution->contains(integer_id)) {
+
+  if (vi->b_solution->contains(anything_id)) {
+      pt->ik_anything = 1;
+  }
+
+  if (vi->b_solution->contains(integer_id)) {
       pt->ik_anything = 1;
   }
 
@@ -6414,9 +6421,11 @@ ik_pt_solution_empty_p (struct pt_solution *pt)
   else if (pt->ik_ipa_escaped && !ik_pt_solution_empty_p (&ik_ipa_escaped_pt))
 	  ret = false;
 
+#ifdef KPTA_REPORT_ALL
   if (glob_ipa_dump) {
     fprintf(glob_ipa_dump, "query_ik_pt_solution_empty_p;%u;NA;%s;%lu;NA\n", ik_pt_solution_to_vi_id(pt), ret ? "true" : "false", ik_pt_solution_size(pt));
   }
+#endif
 
   return ret;
 }
@@ -6474,9 +6483,11 @@ ik_pt_solution_includes_global (struct pt_solution *pt)
      and global variables.  */
   ret = true;
 
+#ifdef KPTA_REPORT_ALL
   if (glob_ipa_dump) {
     fprintf(glob_ipa_dump, "query_ik_pt_solution_includes_global;%u;NA;%s;%lu;NA\n", ik_pt_solution_to_vi_id(pt), ret ? "true" : "false", ik_pt_solution_size(pt));
   }
+#endif
 
   return ret;
 }
@@ -6502,9 +6513,10 @@ ik_pt_solution_includes_1 (struct pt_solution *pt, const_tree decl)
       && pt->b_vars->contains(DECL_PT_UID (decl)))
     return true;
 
-  /* If the solution includes ESCAPED, check it.  */
-  if (pt->ik_ipa_escaped
-      && ik_pt_solution_includes_1 (&ik_ipa_escaped_pt, decl))
+  /* If the solution includes ESCAPED, check it, unless this is the ESCAPED
+   * solution.  */
+  if ((pt->varid != escaped_id) && (pt->ik_ipa_escaped
+      && ik_pt_solution_includes_1 (&ik_ipa_escaped_pt, decl)))
     return true;
 
   return false;
@@ -7053,7 +7065,7 @@ ipa_kpta_execute (void)
   in_ipa_mode = 1;
   
   /* A file to dump some data in, mostly statistics. */
-  if (dump_file) {
+  if (dump_file && glob_ipa_dump == NULL) {
     glob_ipa_dump = dump_begin (TDI_krakonos, NULL);
   }
 
@@ -7333,11 +7345,6 @@ ipa_kpta_execute (void)
 		      clobbers = gimple_call_clobber_set (stmt);
 		      memset (uses, 0, sizeof (struct pt_solution));
 		      memset (clobbers, 0, sizeof (struct pt_solution));
-		      /* KTODO: Do something smart here, perhaps the bloomap walk is acceptable? */
-		      uses->ik_nonlocal = 1;
-		      uses->ik_ipa_escaped = 1;
-		      clobbers->ik_nonlocal = 1;
-		      clobbers->ik_ipa_escaped = 1;
 #if 1
 		      unsigned i;
                       BLOOMAP_FOR_EACH(i, fi->b_solution)
@@ -7377,8 +7384,6 @@ ipa_kpta_execute (void)
       fn->gimple_df->ipa_kpta = true;
     }
 
-  fprintf(stderr, "ik-structalias finished.\n");
-  ik_dump_pta_stats(stderr);
   dump_ik_statistics(stderr);
   ipa_kpta_finished = true;
 
