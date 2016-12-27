@@ -6517,7 +6517,7 @@ std_pt_solutions_intersect (struct pt_solution *pt1, struct pt_solution *pt2)
   else
     ++pta_stats.std_pt_solutions_intersect_no_alias;
   if (glob_ipa_dump) {
-    fprintf(glob_ipa_dump, "query_std_pt_solution_intersect;%u;%u;%s;%lu;%lu\n", std_pt_solution_to_vi_id(pt1), std_pt_solution_to_vi_id(pt2), res ? "true" : "false", std_pt_solution_size(pt1), std_pt_solution_size(pt2));
+    fprintf(glob_ipa_dump, "query_std_pt_solutions_intersect;%u;%u;%s;%lu;%lu\n", std_pt_solution_to_vi_id(pt1), std_pt_solution_to_vi_id(pt2), res ? "true" : "false", std_pt_solution_size(pt1), std_pt_solution_size(pt2));
   }
   return res;
 }
