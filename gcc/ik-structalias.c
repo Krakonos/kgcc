@@ -6351,14 +6351,17 @@ ik_pt_solution_set_var (struct pt_solution *pt, tree var)
   /* When a family is not initialized, there is no work for us. */
   if (!family) return;
 
+  varinfo_t vi = lookup_vi_for_tree(var);
+  if (!vi) return;
+
   /* KTODO:check correctness*/
   pt->b_vars = family->newMap();
-  pt->b_vars->add(DECL_PT_UID (var));
+  pt->b_vars->add(vi->id);
   pt->ik_vars_contains_nonlocal = is_global_var (var);
   if (cfun->gimple_df->escaped.b_vars) {
       pt->ik_vars_contains_escaped
 	  = (cfun->gimple_df->escaped.ik_anything
-		  || cfun->gimple_df->escaped.b_vars->contains(DECL_PT_UID (var)));
+		  || cfun->gimple_df->escaped.b_vars->contains(vi->id));
   } else {
       pt->ik_vars_contains_escaped = true;
   }
@@ -6373,7 +6376,6 @@ ik_pt_solution_set_var (struct pt_solution *pt, tree var)
 static void
 ik_pt_solution_ior_into (struct pt_solution *dest, struct pt_solution *src)
 {
-  /* KTODO:add_bloomap */
   dest->ik_anything |= src->ik_anything;
   if (dest->ik_anything)
     {
