@@ -6101,6 +6101,43 @@ shared_bitmap_hasher::equal (const value_type *sbi1, const compare_type *sbi2)
 /* Set bits in INTO corresponding to the variable uids in solution set FROM.  */
 
 static void
+ik_check_escaped_and_nonlocal(struct pt_solution *pt)
+{
+  unsigned int i;
+  bitmap_iterator bi;
+  varinfo_t escaped_vi = get_varinfo (find (escaped_id));
+  bool everything_escaped
+    = escaped_vi->b_solution && escaped_vi->b_solution->contains(anything_id);
+
+  BLOOMAP_FOR_EACH(i, pt->b_vars)
+    {
+      varinfo_t vi = get_varinfo (i);
+
+      /* The only artificial variables that are allowed in a may-alias
+	 set are heap variables.  */
+      if (vi->is_artificial_var && !vi->is_heap_var)
+	continue;
+
+      if (everything_escaped
+	  || (escaped_vi->b_solution
+	      && escaped_vi->b_solution->contains(i)))
+	{
+	  pt->ik_vars_contains_escaped = true;
+	  pt->ik_vars_contains_escaped_heap = vi->is_heap_var;
+	}
+
+      if (TREE_CODE (vi->decl) == VAR_DECL
+	  || TREE_CODE (vi->decl) == PARM_DECL
+	  || TREE_CODE (vi->decl) == RESULT_DECL)
+	{
+	  /* Add the decl to the points-to set.  Note that the points-to
+	     set contains global variables.  */
+	  if (vi->is_global_var)
+	    pt->ik_vars_contains_nonlocal = true;
+	}
+    }
+}
+static void
 set_uids_in_ptset (bitmap into, bitmap from, struct pt_solution *pt)
 {
   unsigned int i;
@@ -6219,6 +6256,8 @@ ik_find_what_var_points_to (varinfo_t orig_vi, struct pt_solution* pt)
 
   pta_stats.ik_pt_solution_aliases_nontriv++;
   pt->b_vars = vi->b_solution;
+
+  ik_check_escaped_and_nonlocal(pt);
 
   /* In this phase, we have a solution that does not alias with anything by ID.
    * Let's store it for benchmarking purposes. */
